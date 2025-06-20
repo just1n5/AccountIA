@@ -1,0 +1,70 @@
+/* CSS directo para inputs con iconos - SOLUCIÓN DE EMERGENCIA */
+
+/* Contenedor relativo para iconos */
+.input-icon-container {
+  position: relative;
+  width: 100%;
+}
+
+/* Icono izquierdo */
+.input-icon-left {
+  position: absolute;
+  left: 16px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: #9CA3AF;
+  pointer-events: none;
+  z-index: 2;
+}
+
+/* Icono derecho */
+.input-icon-right {
+  position: absolute;
+  right: 16px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: #9CA3AF;
+  cursor: pointer;
+  background: none;
+  border: none;
+  padding: 0;
+  z-index: 2;
+}
+
+/* Input con icono izquierdo */
+.input-with-left-icon {
+  width: 100%;
+  padding: 12px 16px 12px 56px !important;
+  border: 1px solid #D1D5DB;
+  border-radius: 8px;
+  font-size: 16px;
+  outline: none;
+  transition: all 0.2s ease;
+  background: white;
+  color: #111827;
+}
+
+/* Input con ambos iconos */
+.input-with-both-icons {
+  width: 100%;
+  padding: 12px 56px 12px 56px !important;
+  border: 1px solid #D1D5DB;
+  border-radius: 8px;
+  font-size: 16px;
+  outline: none;
+  transition: all 0.2s ease;
+  background: white;
+  color: #111827;
+}
+
+/* Estados focus */
+.input-with-left-icon:focus,
+.input-with-both-icons:focus {
+  border-color: #3B82F6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+/* Estados hover en iconos */
+.input-icon-right:hover {
+  color: #6B7280;
+}
