@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useAuth } from './AuthProvider';
+import { useAuth } from '../../contexts/AuthContext';
 import { Link } from 'react-router-dom';
 import { Eye, EyeOff, Mail, Lock, User, UserPlus } from 'lucide-react';
 import { toast } from 'react-hot-toast';
@@ -9,7 +9,7 @@ interface RegisterFormProps {
 }
 
 export const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess }) => {
-  const { signUp, signInWithGoogle } = useAuth();
+  const { register, loginWithGoogle } = useAuth();
   const [formData, setFormData] = useState({
     name: '',
     email: '',
@@ -53,7 +53,7 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess }) => {
 
     setIsLoading(true);
     try {
-      await signUp(formData.email, formData.password, formData.name);
+      await register(formData.email, formData.password, formData.name);
       toast.success('¡Cuenta creada exitosamente! Bienvenido a AccountIA');
       onSuccess?.();
     } catch (error: any) {
@@ -66,7 +66,7 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess }) => {
   const handleGoogleSignIn = async () => {
     setIsLoading(true);
     try {
-      await signInWithGoogle();
+      await loginWithGoogle();
       toast.success('¡Bienvenido a AccountIA!');
       onSuccess?.();
     } catch (error: any) {

@@ -1,0 +1,58 @@
+# ================================
+# AccountIA Backend Requirements (WINDOWS - Versiones Flexibles)
+# ================================
+
+# Django Core
+Django>=4.2,<5.0
+djangorestframework>=3.15
+django-cors-headers>=4.3
+django-environ>=0.11
+
+# Database
+psycopg2-binary>=2.9
+dj-database-url>=2.1
+
+# Authentication & Security
+firebase-admin>=6.2
+PyJWT>=2.8
+cryptography>=41.0
+
+# API Documentation
+drf-spectacular>=0.27
+
+# Task Queue (Celery) - Básico
+celery>=5.3
+redis>=5.0
+
+# File Processing (Versiones compatibles con Windows)
+pandas>=2.0
+numpy>=1.24
+openpyxl>=3.1
+Pillow>=10.0
+python-dotenv>=1.0
+xlrd>=2.0
+
+# Google Cloud (Básico)
+google-cloud-storage>=2.10
+google-generativeai>=0.3
+
+# Utilities
+requests>=2.31
+python-decouple>=3.8
+python-dateutil>=2.8
+pytz>=2023.3
+
+# Development Tools (Básico)
+django-debug-toolbar>=4.2
+django-extensions>=3.2
+ipython>=8.18
+
+# Testing
+pytest>=7.4
+pytest-django>=4.7
+pytest-cov>=4.1
+factory-boy>=3.3
+
+# Production
+gunicorn>=21.2
+whitenoise>=6.6

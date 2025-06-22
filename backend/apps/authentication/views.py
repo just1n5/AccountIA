@@ -10,6 +10,46 @@ import json
 
 @api_view(['POST'])
 @permission_classes([AllowAny])
+def create_session(request):
+    """
+    Crea una sesión de usuario validando el token de Firebase
+    """
+    try:
+        data = json.loads(request.body)
+        firebase_token = data.get('firebase_token')
+        
+        if not firebase_token:
+            return Response(
+                {'error': 'Firebase token requerido'}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # TODO: Validar token con Firebase Admin SDK
+        # Por ahora, respuesta de prueba
+        
+        user_data = {
+            'id': 'test-user-123',
+            'email': 'test@example.com',
+            'full_name': 'Usuario de Prueba',
+            'created_at': '2024-01-01T00:00:00Z',
+            'last_login_at': '2024-01-01T00:00:00Z'
+        }
+        
+        return Response(user_data, status=status.HTTP_200_OK)
+        
+    except json.JSONDecodeError:
+        return Response(
+            {'error': 'JSON inválido'}, 
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    except Exception as e:
+        return Response(
+            {'error': f'Error interno: {str(e)}'}, 
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
 def firebase_auth(request):
     """
     Endpoint para autenticación con Firebase

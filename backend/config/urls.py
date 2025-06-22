@@ -41,7 +41,8 @@ urlpatterns = [
     # API v1
     path('api/v1/auth/', include('apps.authentication.urls')),
     path('api/v1/users/', include('apps.users.urls')),
-    path('api/v1/', include('apps.documents.urls')),  # Incluye declaraciones y documentos
+    path('api/v1/', include('apps.declarations.urls')),  # Declaraciones
+    path('api/v1/', include('apps.documents.urls')),     # Documentos
     # path('api/v1/ai/', include('apps.ai_core.urls')),  # Pendiente de implementar
     # path('api/v1/payments/', include('apps.payments.urls')),  # Pendiente de implementar
 ]

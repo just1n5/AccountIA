@@ -1,0 +1,15 @@
+# Dependencias mínimas para MVP - sin pandas temporalmente
+Django==4.2.16
+djangorestframework==3.15.2
+django-cors-headers==4.3.1
+django-environ==0.11.2
+dj-database-url==2.1.0
+firebase-admin==6.2.0
+PyJWT==2.8.0
+cryptography==41.0.7
+drf-spectacular==0.27.2
+redis==5.0.1
+
+# Opcionales para desarrollo
+requests==2.31.0
+python-dotenv==1.0.0

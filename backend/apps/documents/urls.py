@@ -1,47 +1,29 @@
 """
-URLs para la app de documentos
+URLs para la aplicación de documentos.
 """
-
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
+from .views import DocumentViewSet, DocumentTemplateViewSet
 
-from .views import (
-    DeclarationViewSet,
-    create_document_upload,
-    update_document_status,
-    get_document_status,
-    health_check
+app_name = 'documents'
+
+# Router principal para documentos generales
+router = DefaultRouter()
+router.register(r'documents', DocumentViewSet, basename='document')
+router.register(r'templates', DocumentTemplateViewSet, basename='document-template')
+
+# Router para documentos anidados bajo declaraciones
+declaration_documents_router = DefaultRouter()
+declaration_documents_router.register(
+    r'documents',
+    DocumentViewSet,
+    basename='declaration-documents'
 )
 
-# Router para ViewSets
-router = DefaultRouter()
-router.register(r'declarations', DeclarationViewSet, basename='declaration')
-
-# URLs personalizadas
-custom_urlpatterns = [
-    # Health check
-    path('health/', health_check, name='health_check'),
-    
-    # Documentos
-    path(
-        'declarations/<uuid:declaration_id>/documents/',
-        create_document_upload,
-        name='create_document_upload'
-    ),
-    path(
-        'declarations/<uuid:declaration_id>/documents/<uuid:document_id>/status/',
-        update_document_status,
-        name='update_document_status'
-    ),
-    path(
-        'declarations/<uuid:declaration_id>/documents/<uuid:document_id>/status/',
-        get_document_status,
-        name='get_document_status'
-    ),
-]
-
-# Combinar URLs
 urlpatterns = [
+    # URLs generales
     path('', include(router.urls)),
-    *custom_urlpatterns,
+    
+    # URLs anidadas bajo declaraciones
+    path('declarations/<str:declaration_pk>/', include(declaration_documents_router.urls)),
 ]

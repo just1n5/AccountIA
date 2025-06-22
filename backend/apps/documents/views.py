@@ -1,428 +1,285 @@
 """
-Vistas de la API para gestión de documentos y declaraciones
+Vistas API para documentos.
 """
-
-import logging
 from rest_framework import viewsets, status
-from rest_framework.decorators import action, api_view, permission_classes
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.decorators import action
 from rest_framework.response import Response
-from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework.permissions import IsAuthenticated
 from django.shortcuts import get_object_or_404
 from django.db import transaction
-from django.http import JsonResponse
-from django.utils import timezone
+from django.conf import settings
+import uuid
+import os
 
-from .models import Declaration, Document, ProcessingLog
-from .services.storage_service import get_gcs_service
-from .tasks import process_exogena_file, generate_declaration_summary
+from .models import Document, DocumentTemplate
+from .serializers import (
+    DocumentSerializer,
+    DocumentUploadSerializer,
+    DocumentStatusUpdateSerializer,
+    DocumentProcessedDataSerializer,
+    DocumentTemplateSerializer
+)
+from .services.storage_service import get_storage_service
+from .tasks import process_document
+from apps.declarations.models import Declaration
+
+import logging
 
 logger = logging.getLogger(__name__)
 
 
-class DeclarationViewSet(viewsets.ModelViewSet):
+class DocumentViewSet(viewsets.ModelViewSet):
     """
-    ViewSet para gestionar declaraciones de renta
+    ViewSet para gestión de documentos.
     """
+    serializer_class = DocumentSerializer
     permission_classes = [IsAuthenticated]
     
     def get_queryset(self):
-        """Obtener solo las declaraciones del usuario autenticado"""
-        return Declaration.objects.filter(user=self.request.user)
-    
-    def create(self, request):
         """
-        Crear una nueva declaración de renta
+        Filtra documentos por declaración y usuario.
+        """
+        # Si viene en el contexto de una declaración específica
+        declaration_id = self.kwargs.get('declaration_pk')
         
-        POST /api/v1/declarations/
-        Body: {"fiscal_year": 2024}
-        """
-        try:
-            fiscal_year = request.data.get('fiscal_year')
-            
-            if not fiscal_year:
-                return Response(
-                    {'error': 'fiscal_year es requerido'}, 
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-            
-            # Verificar que no exista ya una declaración para ese año
-            existing = Declaration.objects.filter(
-                user=request.user, 
-                fiscal_year=fiscal_year
-            ).first()
-            
-            if existing:
-                return Response(
-                    {
-                        'error': f'Ya existe una declaración para el año {fiscal_year}',
-                        'existing_declaration_id': str(existing.id)
-                    },
-                    status=status.HTTP_409_CONFLICT
-                )
-            
-            # Crear nueva declaración
-            declaration = Declaration.objects.create(
-                user=request.user,
-                fiscal_year=fiscal_year
+        if declaration_id:
+            declaration = get_object_or_404(
+                Declaration,
+                id=declaration_id,
+                user=self.request.user
             )
-            
-            logger.info(f"✅ Declaración creada: {declaration.id} para usuario {request.user.id}")
-            
-            return Response({
-                'id': str(declaration.id),
-                'fiscal_year': declaration.fiscal_year,
-                'status': declaration.status,
-                'created_at': declaration.created_at.isoformat()
-            }, status=status.HTTP_201_CREATED)
-            
-        except Exception as e:
-            logger.error(f"❌ Error creando declaración: {str(e)}")
+            return Document.objects.filter(
+                declaration=declaration,
+                is_active=True
+            ).order_by('-created_at')
+        
+        # Si es una consulta general, retornar todos los documentos del usuario
+        return Document.objects.filter(
+            declaration__user=self.request.user,
+            is_active=True
+        ).select_related('declaration').order_by('-created_at')
+    
+    @action(detail=False, methods=['post'])
+    def initiate_upload(self, request, declaration_pk=None):
+        """
+        Inicia el proceso de carga de un documento.
+        Retorna una URL firmada para que el cliente suba directamente a GCS.
+        """
+        # Validar que existe la declaración
+        declaration = get_object_or_404(
+            Declaration,
+            id=declaration_pk,
+            user=request.user
+        )
+        
+        # Validar que la declaración es editable
+        if not declaration.is_editable:
             return Response(
-                {'error': 'Error interno del servidor'}, 
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                {'error': 'No se pueden agregar documentos a esta declaración'},
+                status=status.HTTP_400_BAD_REQUEST
             )
-    
-    def retrieve(self, request, pk=None):
-        """
-        Obtener detalles de una declaración
         
-        GET /api/v1/declarations/{id}/
-        """
-        try:
-            declaration = get_object_or_404(self.get_queryset(), pk=pk)
+        # Validar datos de entrada
+        serializer = DocumentUploadSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        
+        validated_data = serializer.validated_data
+        
+        with transaction.atomic():
+            # Generar nombre único para el archivo
+            file_ext = os.path.splitext(validated_data['file_name'])[1]
+            unique_filename = f"{uuid.uuid4()}{file_ext}"
             
-            # Incluir documentos asociados
-            documents = []
-            for doc in declaration.documents.all():
-                documents.append({
-                    'id': str(doc.id),
-                    'file_name': doc.original_filename,
-                    'file_type': doc.get_file_type_display(),
-                    'upload_status': doc.get_upload_status_display(),
-                    'created_at': doc.created_at.isoformat(),
-                    'file_size': doc.file_size
-                })
+            # Crear registro de documento
+            document = Document.objects.create(
+                declaration=declaration,
+                file_name=unique_filename,
+                original_file_name=validated_data['file_name'],
+                file_size=validated_data.get('file_size'),
+                file_type=validated_data['file_type'],
+                mime_type=validated_data.get('mime_type', 'application/octet-stream'),
+                description=validated_data.get('description', ''),
+                upload_status='pending',
+                uploaded_by=request.user
+            )
+            
+            # Generar URL firmada para subida
+            storage_service = get_storage_service()
+            storage_key = document.get_storage_key()
+            
+            try:
+                signed_url = storage_service.generate_signed_url(
+                    blob_name=storage_key,
+                    expiration=3600,  # 1 hora
+                    method='PUT',
+                    content_type=document.mime_type
+                )
+                
+                document.storage_path = storage_key
+                document.upload_status = 'uploading'
+                document.save()
+                
+            except Exception as e:
+                logger.error(f"Error al generar URL firmada: {str(e)}")
+                document.mark_as_error([f"Error al preparar la carga: {str(e)}"])
+                
+                return Response(
+                    {'error': 'Error al preparar la carga del archivo'},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+        
+        return Response({
+            'document_id': str(document.id),
+            'upload_url': signed_url,
+            'storage_key': storage_key,
+            'expires_in': 3600
+        }, status=status.HTTP_201_CREATED)
+    
+    @action(detail=True, methods=['put'])
+    def update_status(self, request, pk=None, declaration_pk=None):
+        """
+        Actualiza el estado de un documento después de la carga.
+        """
+        document = self.get_object()
+        
+        serializer = DocumentStatusUpdateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        
+        validated_data = serializer.validated_data
+        new_status = validated_data['upload_status']
+        
+        if new_status == 'uploaded':
+            # Marcar como subido y lanzar procesamiento
+            document.upload_status = 'uploaded'
+            document.save()
+            
+            # Lanzar tarea de procesamiento según el tipo
+            if document.file_type == 'exogena_report':
+                process_document.delay(str(document.id))
+                
+        elif new_status == 'error':
+            # Marcar con error
+            document.mark_as_error([validated_data.get('error_message', 'Error de carga')])
+        
+        return Response(
+            DocumentSerializer(document).data,
+            status=status.HTTP_200_OK
+        )
+    
+    @action(detail=True, methods=['get'])
+    def download_url(self, request, pk=None, declaration_pk=None):
+        """
+        Genera una URL firmada para descargar un documento.
+        """
+        document = self.get_object()
+        
+        if document.upload_status not in ['uploaded', 'processed']:
+            return Response(
+                {'error': 'El documento no está disponible para descarga'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            storage_service = get_storage_service()
+            download_url = storage_service.generate_signed_url(
+                blob_name=document.storage_path,
+                expiration=3600,  # 1 hora
+                method='GET'
+            )
             
             return Response({
-                'id': str(declaration.id),
-                'fiscal_year': declaration.fiscal_year,
-                'status': declaration.get_status_display(),
-                'summary_data': declaration.summary_data or {},
-                'documents': documents,
-                'created_at': declaration.created_at.isoformat(),
-                'updated_at': declaration.updated_at.isoformat()
+                'download_url': download_url,
+                'filename': document.original_file_name,
+                'expires_in': 3600
             })
             
         except Exception as e:
-            logger.error(f"❌ Error obteniendo declaración {pk}: {str(e)}")
+            logger.error(f"Error al generar URL de descarga: {str(e)}")
             return Response(
-                {'error': 'Error interno del servidor'}, 
+                {'error': 'Error al generar URL de descarga'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     
-    def list(self, request):
+    @action(detail=True, methods=['get'])
+    def processed_data(self, request, pk=None, declaration_pk=None):
         """
-        Listar todas las declaraciones del usuario
+        Obtiene los datos procesados de un documento.
+        """
+        document = self.get_object()
         
-        GET /api/v1/declarations/
-        """
-        try:
-            declarations = self.get_queryset()
-            
-            result = []
-            for declaration in declarations:
-                result.append({
-                    'id': str(declaration.id),
-                    'fiscal_year': declaration.fiscal_year,
-                    'status': declaration.get_status_display(),
-                    'total_income': declaration.get_total_income(),
-                    'total_withholdings': declaration.get_total_withholdings(),
-                    'estimated_tax': declaration.get_estimated_tax(),
-                    'created_at': declaration.created_at.isoformat(),
-                    'documents_count': declaration.documents.count()
-                })
-            
-            return Response(result)
-            
-        except Exception as e:
-            logger.error(f"❌ Error listando declaraciones para usuario {request.user.id}: {str(e)}")
+        if not document.is_processed:
             return Response(
-                {'error': 'Error interno del servidor'}, 
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                {'error': 'El documento no ha sido procesado'},
+                status=status.HTTP_400_BAD_REQUEST
             )
+        
+        serializer = DocumentProcessedDataSerializer(document)
+        return Response(serializer.data)
     
     @action(detail=True, methods=['post'])
-    def generate_summary(self, request, pk=None):
+    def reprocess(self, request, pk=None, declaration_pk=None):
         """
-        Generar resumen completo de la declaración
-        
-        POST /api/v1/declarations/{id}/generate_summary/
+        Solicita el reprocesamiento de un documento.
         """
-        try:
-            declaration = get_object_or_404(self.get_queryset(), pk=pk)
-            
-            # Lanzar tarea asíncrona
-            task = generate_declaration_summary.delay(str(declaration.id))
-            
-            return Response({
-                'message': 'Generación de resumen iniciada',
-                'task_id': task.id,
-                'declaration_id': str(declaration.id)
-            }, status=status.HTTP_202_ACCEPTED)
-            
-        except Exception as e:
-            logger.error(f"❌ Error generando resumen para declaración {pk}: {str(e)}")
-            return Response(
-                {'error': 'Error interno del servidor'}, 
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-
-
-@api_view(['POST'])
-@permission_classes([IsAuthenticated])
-def create_document_upload(request, declaration_id):
-    """
-    Crear URL firmada para subir un documento
-    
-    POST /api/v1/declarations/{declaration_id}/documents/
-    Body: {
-        "file_name": "exogena_2024.xlsx",
-        "file_type": "exogena_report"
-    }
-    """
-    try:
-        # Verificar que la declaración pertenece al usuario
-        declaration = get_object_or_404(
-            Declaration.objects.filter(user=request.user), 
-            pk=declaration_id
-        )
+        document = self.get_object()
         
-        file_name = request.data.get('file_name')
-        file_type = request.data.get('file_type', 'other')
-        
-        if not file_name:
+        if document.upload_status != 'error':
             return Response(
-                {'error': 'file_name es requerido'}, 
+                {'error': 'Solo se pueden reprocesar documentos con error'},
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        # Validar tipo de archivo
-        valid_file_types = [choice[0] for choice in Document.FILE_TYPE_CHOICES]
-        if file_type not in valid_file_types:
-            return Response(
-                {'error': f'file_type debe ser uno de: {valid_file_types}'}, 
-                status=status.HTTP_400_BAD_REQUEST
-            )
+        # Limpiar errores anteriores
+        document.processing_errors = []
+        document.mark_as_processing()
         
-        # Generar URL firmada
-        gcs_service = get_gcs_service()
-        upload_url, storage_path = gcs_service.generate_signed_url(
-            file_name, 
-            str(request.user.id)
-        )
-        
-        # Crear registro de documento
-        document = Document.objects.create(
-            declaration=declaration,
-            file_name=file_name,
-            original_filename=file_name,
-            file_type=file_type,
-            storage_path=storage_path,
-            upload_status='pending'
-        )
-        
-        logger.info(f"✅ URL firmada generada para documento {document.id}")
+        # Lanzar tarea de procesamiento
+        process_document.delay(str(document.id))
         
         return Response({
-            'document_id': str(document.id),
-            'upload_url': upload_url,
-            'storage_path': storage_path,
-            'expires_in_minutes': 15
+            'message': 'Reprocesamiento iniciado',
+            'document_id': str(document.id)
         })
-        
-    except Exception as e:
-        logger.error(f"❌ Error creando URL de upload: {str(e)}")
-        return Response(
-            {'error': 'Error interno del servidor'}, 
-            status=status.HTTP_500_INTERNAL_SERVER_ERROR
-        )
-
-
-@api_view(['PUT'])
-@permission_classes([IsAuthenticated])
-def update_document_status(request, declaration_id, document_id):
-    """
-    Actualizar el estado de un documento tras la subida
     
-    PUT /api/v1/declarations/{declaration_id}/documents/{document_id}/status/
-    Body: {"upload_status": "uploaded"}
-    """
-    try:
-        # Verificar que el documento pertenece al usuario
-        document = get_object_or_404(
-            Document.objects.filter(
-                declaration__user=request.user,
-                declaration_id=declaration_id
-            ), 
-            pk=document_id
-        )
+    def destroy(self, request, *args, **kwargs):
+        """
+        Elimina un documento (soft delete).
+        """
+        document = self.get_object()
         
-        new_status = request.data.get('upload_status')
-        
-        if not new_status:
+        # Verificar que la declaración es editable
+        if not document.declaration.is_editable:
             return Response(
-                {'error': 'upload_status es requerido'}, 
+                {'error': 'No se pueden eliminar documentos de esta declaración'},
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        # Validar estado
-        valid_statuses = [choice[0] for choice in Document.UPLOAD_STATUS_CHOICES]
-        if new_status not in valid_statuses:
-            return Response(
-                {'error': f'upload_status debe ser uno de: {valid_statuses}'}, 
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        # Actualizar estado
-        document.upload_status = new_status
+        # Soft delete
+        document.is_active = False
         document.save()
         
-        # Si se marcó como subido, iniciar procesamiento
-        if new_status == 'uploaded':
-            # Verificar que el archivo existe en GCS
-            gcs_service = get_gcs_service()
-            if gcs_service.file_exists(document.storage_path):
-                # Obtener metadatos del archivo
-                metadata = gcs_service.get_file_metadata(document.storage_path)
-                if metadata:
-                    document.file_size = metadata.get('size')
-                    document.content_type = metadata.get('content_type')
-                    document.save()
-                
-                # Lanzar procesamiento asíncrono
-                if document.is_exogena_file():
-                    task = process_exogena_file.delay(str(document.id))
-                    
-                    logger.info(f"✅ Procesamiento iniciado para documento {document.id}, task: {task.id}")
-                    
-                    return Response({
-                        'message': 'Documento marcado como subido y procesamiento iniciado',
-                        'document_id': str(document.id),
-                        'task_id': task.id,
-                        'status': document.upload_status
-                    }, status=status.HTTP_202_ACCEPTED)
-                else:
-                    return Response({
-                        'message': 'Documento marcado como subido',
-                        'document_id': str(document.id),
-                        'status': document.upload_status
-                    })
-            else:
-                document.mark_as_error('Archivo no encontrado en Google Cloud Storage')
-                return Response(
-                    {'error': 'Archivo no encontrado en el almacenamiento'}, 
-                    status=status.HTTP_404_NOT_FOUND
-                )
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class DocumentTemplateViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    ViewSet para plantillas de documentos.
+    """
+    queryset = DocumentTemplate.objects.filter(is_active=True)
+    serializer_class = DocumentTemplateSerializer
+    permission_classes = [IsAuthenticated]
+    
+    @action(detail=True, methods=['post'])
+    def generate(self, request, pk=None):
+        """
+        Genera un documento basado en una plantilla.
+        """
+        template = self.get_object()
+        
+        # TODO: Implementar generación de documentos desde plantillas
+        # Por ahora retornar un placeholder
         
         return Response({
-            'message': 'Estado actualizado',
-            'document_id': str(document.id),
-            'status': document.upload_status
-        })
-        
-    except Exception as e:
-        logger.error(f"❌ Error actualizando estado de documento {document_id}: {str(e)}")
-        return Response(
-            {'error': 'Error interno del servidor'}, 
-            status=status.HTTP_500_INTERNAL_SERVER_ERROR
-        )
-
-
-@api_view(['GET'])
-@permission_classes([IsAuthenticated])
-def get_document_status(request, declaration_id, document_id):
-    """
-    Obtener el estado actual de un documento
-    
-    GET /api/v1/declarations/{declaration_id}/documents/{document_id}/status/
-    """
-    try:
-        document = get_object_or_404(
-            Document.objects.filter(
-                declaration__user=request.user,
-                declaration_id=declaration_id
-            ), 
-            pk=document_id
-        )
-        
-        # Obtener logs recientes
-        recent_logs = []
-        for log in document.processing_logs.all()[:5]:  # Últimos 5 logs
-            recent_logs.append({
-                'level': log.level,
-                'message': log.message,
-                'created_at': log.created_at.isoformat()
-            })
-        
-        return Response({
-            'document_id': str(document.id),
-            'file_name': document.original_filename,
-            'file_type': document.get_file_type_display(),
-            'upload_status': document.upload_status,
-            'upload_status_display': document.get_upload_status_display(),
-            'file_size': document.file_size,
-            'error_message': document.error_message,
-            'retry_count': document.retry_count,
-            'can_retry': document.can_retry(),
-            'processing_duration': str(document.get_processing_duration()) if document.get_processing_duration() else None,
-            'created_at': document.created_at.isoformat(),
-            'updated_at': document.updated_at.isoformat(),
-            'recent_logs': recent_logs,
-            'has_processed_data': bool(document.processed_data)
-        })
-        
-    except Exception as e:
-        logger.error(f"❌ Error obteniendo estado de documento {document_id}: {str(e)}")
-        return Response(
-            {'error': 'Error interno del servidor'}, 
-            status=status.HTTP_500_INTERNAL_SERVER_ERROR
-        )
-
-
-@api_view(['GET'])
-def health_check(request):
-    """
-    Endpoint de health check
-    
-    GET /api/v1/health/
-    """
-    try:
-        # Verificar conexión a base de datos
-        from django.db import connection
-        with connection.cursor() as cursor:
-            cursor.execute("SELECT 1")
-        
-        # Verificar conexión a Google Cloud Storage
-        gcs_status = 'ok'
-        try:
-            gcs_service = get_gcs_service()
-            gcs_service.client.list_buckets(max_results=1)
-        except Exception:
-            gcs_status = 'error'
-        
-        return JsonResponse({
-            'status': 'healthy',
-            'timestamp': timezone.now().isoformat(),
-            'services': {
-                'database': 'ok',
-                'google_cloud_storage': gcs_status
-            }
-        })
-        
-    except Exception as e:
-        return JsonResponse({
-            'status': 'unhealthy',
-            'error': str(e),
-            'timestamp': timezone.now().isoformat()
-        }, status=500)
+            'message': 'Funcionalidad de generación de documentos en desarrollo',
+            'template': template.name
+        }, status=status.HTTP_501_NOT_IMPLEMENTED)

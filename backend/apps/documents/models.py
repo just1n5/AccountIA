@@ -1,241 +1,278 @@
 """
-Modelos para la gestión de documentos y declaraciones en AccountIA
+Modelos de documentos y archivos de soporte.
 """
-
-import uuid
 from django.db import models
-from django.contrib.auth.models import User
-from django.core.validators import FileExtensionValidator, MinValueValidator, MaxValueValidator
-from django.utils import timezone
+from django.contrib.auth import get_user_model
+from django.core.validators import FileExtensionValidator
+from apps.declarations.models import Declaration
+import uuid
+import os
 
-
-class Declaration(models.Model):
-    """
-    Modelo para representar una declaración de renta
-    """
-    
-    STATUS_CHOICES = [
-        ('draft', 'Borrador'),
-        ('processing', 'Procesando'),
-        ('completed', 'Completada'),
-        ('paid', 'Pagada'),
-        ('error', 'Error')
-    ]
-    
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='declarations')
-    fiscal_year = models.IntegerField(
-        validators=[MinValueValidator(2020), MaxValueValidator(2030)],
-        help_text="Año gravable de la declaración"
-    )
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='draft')
-    
-    # Datos resumen de la declaración
-    summary_data = models.JSONField(
-        null=True, 
-        blank=True,
-        help_text="Resumen de ingresos, retenciones e impuestos calculados"
-    )
-    
-    # Metadatos
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-    completed_at = models.DateTimeField(null=True, blank=True)
-    
-    # Campos adicionales
-    notes = models.TextField(blank=True, help_text="Notas adicionales")
-    
-    class Meta:
-        unique_together = ['user', 'fiscal_year']
-        ordering = ['-created_at']
-        verbose_name = "Declaración de Renta"
-        verbose_name_plural = "Declaraciones de Renta"
-    
-    def __str__(self):
-        return f"Declaración {self.fiscal_year} - {self.user.get_full_name() or self.user.username}"
-    
-    def mark_as_completed(self):
-        """Marcar declaración como completada"""
-        self.status = 'completed'
-        self.completed_at = timezone.now()
-        self.save()
-    
-    def get_total_income(self):
-        """Obtener total de ingresos"""
-        if self.summary_data:
-            return self.summary_data.get('total_ingresos', 0)
-        return 0
-    
-    def get_total_withholdings(self):
-        """Obtener total de retenciones"""
-        if self.summary_data:
-            return self.summary_data.get('total_retenciones', 0)
-        return 0
-    
-    def get_estimated_tax(self):
-        """Obtener impuesto estimado"""
-        if self.summary_data:
-            return self.summary_data.get('impuesto_estimado', 0)
-        return 0
+User = get_user_model()
 
 
 class Document(models.Model):
     """
-    Modelo para representar documentos subidos por los usuarios
+    Representa un documento o archivo de soporte subido por el usuario.
     """
+    DOCUMENT_TYPE_CHOICES = [
+        ('exogena_report', 'Información Exógena'),
+        ('income_certificate', 'Certificado de Ingresos'),
+        ('withholding_certificate', 'Certificado de Retenciones'),
+        ('bank_certificate', 'Certificado Bancario'),
+        ('health_invoice', 'Factura de Salud'),
+        ('education_invoice', 'Factura de Educación'),
+        ('mortgage_certificate', 'Certificado de Crédito Hipotecario'),
+        ('pension_certificate', 'Certificado de Pensiones'),
+        ('dependents_proof', 'Prueba de Dependientes'),
+        ('other', 'Otro'),
+    ]
     
     UPLOAD_STATUS_CHOICES = [
         ('pending', 'Pendiente'),
+        ('uploading', 'Subiendo'),
         ('uploaded', 'Subido'),
         ('processing', 'Procesando'),
         ('processed', 'Procesado'),
-        ('error', 'Error')
+        ('error', 'Error'),
     ]
     
-    FILE_TYPE_CHOICES = [
-        ('exogena_report', 'Información Exógena'),
-        ('income_certificate', 'Certificado de Ingresos'),
-        ('deduction_invoice', 'Soporte de Deducción'),
-        ('bank_certificate', 'Certificado Bancario'),
-        ('medical_invoice', 'Factura Médica'),
-        ('education_invoice', 'Factura Educación'),
-        ('mortgage_certificate', 'Certificado Hipotecario'),
-        ('pension_certificate', 'Certificado Pensiones'),
-        ('other', 'Otro')
-    ]
+    id = models.UUIDField(
+        primary_key=True,
+        default=uuid.uuid4,
+        editable=False
+    )
     
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    declaration = models.ForeignKey(Declaration, on_delete=models.CASCADE, related_name='documents')
+    declaration = models.ForeignKey(
+        Declaration,
+        on_delete=models.CASCADE,
+        related_name='documents',
+        verbose_name='Declaración'
+    )
     
     # Información del archivo
-    file_name = models.CharField(max_length=255, help_text="Nombre del archivo")
-    original_filename = models.CharField(max_length=255, help_text="Nombre original del archivo")
-    file_type = models.CharField(max_length=50, choices=FILE_TYPE_CHOICES)
-    storage_path = models.CharField(max_length=500, help_text="Ruta en Google Cloud Storage")
-    file_size = models.BigIntegerField(null=True, blank=True, help_text="Tamaño en bytes")
-    content_type = models.CharField(max_length=100, blank=True)
+    file_name = models.CharField(
+        max_length=255,
+        verbose_name='Nombre del archivo'
+    )
+    original_file_name = models.CharField(
+        max_length=255,
+        verbose_name='Nombre original del archivo'
+    )
+    file_size = models.BigIntegerField(
+        null=True,
+        blank=True,
+        verbose_name='Tamaño del archivo (bytes)'
+    )
+    file_type = models.CharField(
+        max_length=30,
+        choices=DOCUMENT_TYPE_CHOICES,
+        verbose_name='Tipo de documento'
+    )
+    mime_type = models.CharField(
+        max_length=100,
+        null=True,
+        blank=True,
+        verbose_name='Tipo MIME'
+    )
+    
+    # Almacenamiento
+    storage_path = models.CharField(
+        max_length=500,
+        verbose_name='Ruta de almacenamiento',
+        help_text='Ruta en Google Cloud Storage'
+    )
+    storage_url = models.URLField(
+        max_length=500,
+        null=True,
+        blank=True,
+        verbose_name='URL de descarga'
+    )
     
     # Estado del procesamiento
-    upload_status = models.CharField(max_length=20, choices=UPLOAD_STATUS_CHOICES, default='pending')
-    processing_started_at = models.DateTimeField(null=True, blank=True)
-    processing_completed_at = models.DateTimeField(null=True, blank=True)
+    upload_status = models.CharField(
+        max_length=20,
+        choices=UPLOAD_STATUS_CHOICES,
+        default='pending',
+        verbose_name='Estado de carga'
+    )
     
     # Datos procesados
     processed_data = models.JSONField(
-        null=True, 
+        default=dict,
         blank=True,
-        help_text="Datos extraídos del documento"
+        verbose_name='Datos procesados',
+        help_text='Datos extraídos del documento'
     )
     
-    # Manejo de errores
-    error_message = models.TextField(null=True, blank=True)
-    retry_count = models.IntegerField(default=0)
+    # Metadatos de procesamiento
+    processing_started_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        verbose_name='Inicio de procesamiento'
+    )
+    processing_completed_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        verbose_name='Fin de procesamiento'
+    )
+    processing_errors = models.JSONField(
+        default=list,
+        blank=True,
+        verbose_name='Errores de procesamiento'
+    )
+    
+    # Control de versiones
+    version = models.IntegerField(
+        default=1,
+        verbose_name='Versión'
+    )
+    is_active = models.BooleanField(
+        default=True,
+        verbose_name='Activo'
+    )
+    
+    # Seguridad
+    checksum = models.CharField(
+        max_length=64,
+        null=True,
+        blank=True,
+        verbose_name='Checksum SHA256'
+    )
+    encrypted = models.BooleanField(
+        default=True,
+        verbose_name='Encriptado'
+    )
     
     # Metadatos
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
+    uploaded_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name='uploaded_documents',
+        verbose_name='Subido por'
+    )
+    created_at = models.DateTimeField(
+        auto_now_add=True,
+        verbose_name='Fecha de creación'
+    )
+    updated_at = models.DateTimeField(
+        auto_now=True,
+        verbose_name='Última actualización'
+    )
+    
+    # Información adicional
+    description = models.TextField(
+        blank=True,
+        verbose_name='Descripción'
+    )
+    tags = models.JSONField(
+        default=list,
+        blank=True,
+        verbose_name='Etiquetas'
+    )
     
     class Meta:
+        verbose_name = 'Documento'
+        verbose_name_plural = 'Documentos'
         ordering = ['-created_at']
-        verbose_name = "Documento"
-        verbose_name_plural = "Documentos"
+        indexes = [
+            models.Index(fields=['declaration', 'file_type']),
+            models.Index(fields=['upload_status']),
+            models.Index(fields=['created_at']),
+        ]
     
     def __str__(self):
-        return f"{self.original_filename} - {self.get_file_type_display()}"
+        return f"{self.get_file_type_display()} - {self.original_file_name}"
+    
+    def get_storage_key(self):
+        """Genera la clave de almacenamiento en GCS."""
+        user_id = self.declaration.user.id
+        declaration_id = self.declaration.id
+        return f"users/{user_id}/declarations/{declaration_id}/documents/{self.id}/{self.file_name}"
+    
+    @property
+    def is_processed(self):
+        """Verifica si el documento ha sido procesado."""
+        return self.upload_status == 'processed'
+    
+    @property
+    def has_errors(self):
+        """Verifica si el documento tiene errores de procesamiento."""
+        return self.upload_status == 'error' or bool(self.processing_errors)
+    
+    @property
+    def file_extension(self):
+        """Obtiene la extensión del archivo."""
+        return os.path.splitext(self.file_name)[1].lower()
     
     def mark_as_processing(self):
-        """Marcar documento como en procesamiento"""
+        """Marca el documento como en procesamiento."""
+        from django.utils import timezone
         self.upload_status = 'processing'
         self.processing_started_at = timezone.now()
-        self.save()
+        self.save(update_fields=['upload_status', 'processing_started_at', 'updated_at'])
     
-    def mark_as_processed(self, processed_data=None):
-        """Marcar documento como procesado"""
+    def mark_as_processed(self, data=None):
+        """Marca el documento como procesado."""
+        from django.utils import timezone
         self.upload_status = 'processed'
         self.processing_completed_at = timezone.now()
-        if processed_data:
-            self.processed_data = processed_data
-        self.save()
+        if data:
+            self.processed_data = data
+        self.save(update_fields=['upload_status', 'processing_completed_at', 'processed_data', 'updated_at'])
     
-    def mark_as_error(self, error_message):
-        """Marcar documento con error"""
+    def mark_as_error(self, errors):
+        """Marca el documento con error."""
+        from django.utils import timezone
         self.upload_status = 'error'
-        self.error_message = error_message
-        self.retry_count += 1
-        self.save()
-    
-    def can_retry(self):
-        """Verificar si se puede reintentar el procesamiento"""
-        return self.retry_count < 3 and self.upload_status == 'error'
-    
-    def get_processing_duration(self):
-        """Obtener duración del procesamiento"""
-        if self.processing_started_at and self.processing_completed_at:
-            return self.processing_completed_at - self.processing_started_at
-        return None
-    
-    def is_exogena_file(self):
-        """Verificar si es un archivo de información exógena"""
-        return self.file_type == 'exogena_report'
+        self.processing_completed_at = timezone.now()
+        if isinstance(errors, str):
+            errors = [errors]
+        self.processing_errors = errors
+        self.save(update_fields=['upload_status', 'processing_completed_at', 'processing_errors', 'updated_at'])
 
 
-class ProcessingLog(models.Model):
+class DocumentTemplate(models.Model):
     """
-    Modelo para registrar logs del procesamiento de documentos
+    Plantillas de documentos que el sistema puede generar.
     """
-    
-    LOG_LEVEL_CHOICES = [
-        ('info', 'Info'),
-        ('warning', 'Warning'),
-        ('error', 'Error'),
-        ('debug', 'Debug')
-    ]
-    
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    document = models.ForeignKey(Document, on_delete=models.CASCADE, related_name='processing_logs')
-    
-    level = models.CharField(max_length=10, choices=LOG_LEVEL_CHOICES)
-    message = models.TextField()
-    details = models.JSONField(null=True, blank=True)
-    
-    created_at = models.DateTimeField(auto_now_add=True)
+    name = models.CharField(
+        max_length=100,
+        unique=True,
+        verbose_name='Nombre'
+    )
+    description = models.TextField(
+        verbose_name='Descripción'
+    )
+    template_type = models.CharField(
+        max_length=50,
+        verbose_name='Tipo de plantilla'
+    )
+    template_content = models.TextField(
+        verbose_name='Contenido de la plantilla'
+    )
+    variables = models.JSONField(
+        default=list,
+        verbose_name='Variables disponibles'
+    )
+    is_active = models.BooleanField(
+        default=True,
+        verbose_name='Activo'
+    )
+    created_at = models.DateTimeField(
+        auto_now_add=True,
+        verbose_name='Fecha de creación'
+    )
+    updated_at = models.DateTimeField(
+        auto_now=True,
+        verbose_name='Última actualización'
+    )
     
     class Meta:
-        ordering = ['-created_at']
-        verbose_name = "Log de Procesamiento"
-        verbose_name_plural = "Logs de Procesamiento"
+        verbose_name = 'Plantilla de Documento'
+        verbose_name_plural = 'Plantillas de Documentos'
+        ordering = ['name']
     
     def __str__(self):
-        return f"{self.level.upper()}: {self.message[:50]}"
-
-
-class TaxConcept(models.Model):
-    """
-    Modelo para almacenar conceptos fiscales y su clasificación
-    """
-    
-    CATEGORY_CHOICES = [
-        ('rentas_trabajo', 'Rentas de Trabajo'),
-        ('rentas_capital', 'Rentas de Capital'),
-        ('rentas_no_laborales', 'Rentas No Laborales'),
-        ('retenciones', 'Retenciones'),
-        ('otros', 'Otros')
-    ]
-    
-    code = models.CharField(max_length=10, unique=True, help_text="Código del concepto")
-    name = models.CharField(max_length=200, help_text="Nombre del concepto")
-    description = models.TextField(blank=True)
-    category = models.CharField(max_length=30, choices=CATEGORY_CHOICES)
-    
-    # Metadatos
-    is_active = models.BooleanField(default=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-    
-    class Meta:
-        ordering = ['code']
-        verbose_name = "Concepto Fiscal"
-        verbose_name_plural = "Conceptos Fiscales"
-    
-    def __str__(self):
-        return f"{self.code} - {self.name}"
+        return self.name
