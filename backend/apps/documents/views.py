@@ -4,7 +4,7 @@ Vistas API para documentos.
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, AllowAny
 from django.shortcuts import get_object_or_404
 from django.db import transaction
 from django.conf import settings
@@ -22,6 +22,7 @@ from .serializers import (
 from .services.storage_service import get_storage_service
 from .tasks import process_document
 from apps.declarations.models import Declaration
+from apps.common.permissions import get_testing_permission_classes
 
 import logging
 
@@ -33,29 +34,28 @@ class DocumentViewSet(viewsets.ModelViewSet):
     ViewSet para gestión de documentos.
     """
     serializer_class = DocumentSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [AllowAny]  # TESTING: Sin permisos
     
     def get_queryset(self):
         """
         Filtra documentos por declaración y usuario.
         """
+        # TESTING: Simplificar para testing
+        print(f"🔍 DEBUG Documents: self.request.user = {self.request.user}")
+        
         # Si viene en el contexto de una declaración específica
         declaration_id = self.kwargs.get('declaration_pk')
         
         if declaration_id:
-            declaration = get_object_or_404(
-                Declaration,
-                id=declaration_id,
-                user=self.request.user
-            )
+            # TESTING: No verificar usuario
+            declaration = get_object_or_404(Declaration, id=declaration_id)
             return Document.objects.filter(
                 declaration=declaration,
                 is_active=True
             ).order_by('-created_at')
         
-        # Si es una consulta general, retornar todos los documentos del usuario
+        # TESTING: Retornar todos los documentos
         return Document.objects.filter(
-            declaration__user=self.request.user,
             is_active=True
         ).select_related('declaration').order_by('-created_at')
     
@@ -267,7 +267,7 @@ class DocumentTemplateViewSet(viewsets.ReadOnlyModelViewSet):
     """
     queryset = DocumentTemplate.objects.filter(is_active=True)
     serializer_class = DocumentTemplateSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [AllowAny]  # TESTING: Sin permisos
     
     @action(detail=True, methods=['post'])
     def generate(self, request, pk=None):

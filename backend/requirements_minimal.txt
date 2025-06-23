@@ -1,15 +1,27 @@
-# Dependencias mínimas para MVP - sin pandas temporalmente
+# Requirements mínimos para AccountIA - Solo lo esencial
+# Para desarrollo inicial y testing
+
+# Core Django
 Django==4.2.16
 djangorestframework==3.15.2
 django-cors-headers==4.3.1
 django-environ==0.11.2
-dj-database-url==2.1.0
-firebase-admin==6.2.0
-PyJWT==2.8.0
-cryptography==41.0.7
-drf-spectacular==0.27.2
+
+# Base de datos
+psycopg2-binary==2.9.9
+
+# Data processing (mínimo)
+pandas==2.0.3
+numpy==1.24.3
+openpyxl==3.1.2
+
+# Async processing
+celery==5.3.4
 redis==5.0.1
 
-# Opcionales para desarrollo
+# Utilities básicas
 requests==2.31.0
-python-dotenv==1.0.0
+python-dateutil==2.8.2
+
+# API docs
+drf-spectacular==0.27.2

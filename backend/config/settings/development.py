@@ -1,11 +1,65 @@
 """
 Development settings for AccountIA project.
 """
-
+import os
 from .base import *
 
 # Debug
 DEBUG = True
+
+# Development flags
+DEV_SKIP_AUTH_FOR_TESTING = os.getenv('DEV_SKIP_AUTH_FOR_TESTING', '0') == '1'
+DEV_MOCK_EXTERNAL_SERVICES = os.getenv('DEV_MOCK_EXTERNAL_SERVICES', '0') == '1'
+
+# Middleware - agregar middleware de desarrollo
+MIDDLEWARE = [
+    'corsheaders.middleware.CorsMiddleware',
+    'config.middleware.development.CORSMiddleware',  # CORS mejorado
+    'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',
+    'django.contrib.sessions.middleware.SessionMiddleware',
+    'django.middleware.common.CommonMiddleware',
+    'django.middleware.csrf.CsrfViewMiddleware',
+    'django.contrib.auth.middleware.AuthenticationMiddleware',
+    'config.middleware.development.DevelopmentAuthMiddleware',  # Auth bypass para desarrollo
+    'django.contrib.messages.middleware.MessageMiddleware',
+    'django.middleware.clickjacking.XFrameOptionsMiddleware',
+]
+
+# CORS settings for development
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]
+CORS_ALLOW_ALL_ORIGINS = True
+CORS_ALLOW_CREDENTIALS = True
+CORS_ALLOW_HEADERS = [
+    'accept',
+    'accept-encoding',
+    'authorization',
+    'content-type',
+    'dnt',
+    'origin',
+    'user-agent',
+    'x-csrftoken',
+    'x-requested-with',
+]
+
+# REST Framework settings
+REST_FRAMEWORK = {
+    'DEFAULT_AUTHENTICATION_CLASSES': [
+        'config.utils.development.DevelopmentAuthentication',  # Permite bypass en desarrollo
+        'rest_framework.authentication.SessionAuthentication',
+        'rest_framework.authentication.TokenAuthentication',
+    ],
+    'DEFAULT_PERMISSION_CLASSES': [
+        'config.utils.development.DevelopmentPermission',  # Permite todo en desarrollo
+        'rest_framework.permissions.IsAuthenticated',
+    ],
+    'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
+    'PAGE_SIZE': 20,
+    'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
+}
 
 # Database - SQLite para desarrollo (más simple)
 DATABASES = {

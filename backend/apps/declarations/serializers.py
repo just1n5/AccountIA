@@ -44,7 +44,7 @@ class DeclarationSummarySerializer(serializers.ModelSerializer):
     """
     Serializador resumido para listados de declaraciones.
     """
-    user_email = serializers.EmailField(source='user.email', read_only=True)
+    user_email = serializers.SerializerMethodField()
     balance = serializers.DecimalField(
         max_digits=15, 
         decimal_places=2, 
@@ -54,6 +54,10 @@ class DeclarationSummarySerializer(serializers.ModelSerializer):
         source='documents.count', 
         read_only=True
     )
+    
+    def get_user_email(self, obj):
+        """Obtiene el email del usuario, manejando casos nulos."""
+        return obj.user.email if obj.user else 'test@accountia.co'
     
     class Meta:
         model = Declaration
@@ -196,11 +200,33 @@ class CreateDeclarationSerializer(serializers.ModelSerializer):
         """
         Crea una nueva declaración para el usuario autenticado.
         """
-        user = self.context['request'].user
-        return Declaration.objects.create(
+        request = self.context['request']
+        
+        # TESTING: Crear usuario dummy si no existe o es AnonymousUser
+        from django.conf import settings
+        from django.contrib.auth.models import AnonymousUser
+        
+        if not hasattr(request, 'user') or isinstance(request.user, AnonymousUser):
+            from apps.users.models import User
+            user, created = User.objects.get_or_create(
+                email='test@accountia.co',
+                defaults={
+                    'first_name': 'Test',
+                    'last_name': 'User',
+                    'is_active': True
+                }
+            )
+            print(f"🔧 TESTING: Usuario creado/obtenido: {user.email}")
+        else:
+            user = request.user
+            print(f"🔧 TESTING: Usuario existente: {user}")
+        
+        declaration = Declaration.objects.create(
             user=user,
             **validated_data
         )
+        print(f"🔧 TESTING: Declaración creada: {declaration.id}")
+        return declaration
 
 
 class UpdateDeclarationStatusSerializer(serializers.Serializer):
