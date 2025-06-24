@@ -10,7 +10,7 @@ import LoginPage from './pages/Auth/LoginPage'
 import RegisterPage from './pages/Auth/RegisterPage'
 import ForgotPasswordPage from './pages/Auth/ForgotPasswordPage'
 import DashboardPage from './pages/DashboardPage'
-import DeclarationWizard from './components/declarations/DeclarationWizard'
+import DeclarationWizard from './pages/DeclarationWizard'
 import './styles/index.css'
 
 // Componente para rutas protegidas

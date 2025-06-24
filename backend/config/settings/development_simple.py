@@ -16,7 +16,8 @@ DEBUG = True
 ALLOWED_HOSTS = ['*']
 
 # Development flags
-DEV_SKIP_AUTH_FOR_TESTING = os.getenv('DEV_SKIP_AUTH_FOR_TESTING', '0') == '1'
+# DEV_SKIP_AUTH_FOR_TESTING = os.getenv('DEV_SKIP_AUTH_FOR_TESTING', '0') == '1'
+DEV_SKIP_AUTH_FOR_TESTING = True  # TESTING: Habilitar para Sprint 2
 
 # Application definition - simplificado para testing
 INSTALLED_APPS = [
@@ -121,7 +122,7 @@ REST_FRAMEWORK = {
     ],
 }
 
-print("🔧 TESTING: Autenticación deshabilitada globalmente")
+print("[TESTING] Autenticacion deshabilitada globalmente")
 
 # DRF Spectacular
 SPECTACULAR_SETTINGS = {

@@ -19,7 +19,7 @@ const FileUpload: React.FC<FileUploadProps> = ({
   declarationId,
   onFileUploaded,
   onUploadProgress,
-  existingDocuments = [],
+  existingDocuments = [], // Asegurar que siempre sea un array
   onReprocess,
   maxSize = 50 * 1024 * 1024 // 50MB
 }) => {
@@ -30,9 +30,14 @@ const FileUpload: React.FC<FileUploadProps> = ({
   const [uploadStage, setUploadStage] = useState('');
 
   // Verificar si ya existe un documento de exógena
-  const existingExogena = existingDocuments.find(doc => 
-    doc.file_type === 'exogena_report'
-  );
+  console.log('FileUpload - existingDocuments:', existingDocuments);
+  console.log('FileUpload - existingDocuments tipo:', typeof existingDocuments);
+  console.log('FileUpload - es array?:', Array.isArray(existingDocuments));
+  
+  // Con el documentService corregido, esto debería ser siempre un array
+  const existingExogena = Array.isArray(existingDocuments) 
+    ? existingDocuments.find(doc => doc.file_type === 'exogena_report')
+    : undefined;
 
   const onDrop = useCallback(async (acceptedFiles: File[], rejectedFiles: any[]) => {
     setError(null);
@@ -65,22 +70,60 @@ const FileUpload: React.FC<FileUploadProps> = ({
   }, [declarationId, maxSize]);
 
   const handleUpload = async (file: File) => {
+    // DEBUG: Verificar declarationId
+    console.log('FileUpload - declarationId recibido:', declarationId);
+    console.log('FileUpload - tipo:', typeof declarationId);
+    console.log('FileUpload - existingDocuments:', existingDocuments);
+    console.log('FileUpload - existingDocuments tipo:', typeof existingDocuments);
+    console.log('FileUpload - es array?:', Array.isArray(existingDocuments));
+    
+    if (!declarationId) {
+    setError('Error: No se proporcionó ID de declaración');
+    return;
+  }
+    
     try {
       setIsUploading(true);
       setUploadProgress(0);
       setError(null);
 
-      const document = await documentService.uploadWorkflow(
-        declarationId,
-        file,
-        (stage: string, progress: number) => {
-          setUploadStage(stage);
-          setUploadProgress(progress);
-          onUploadProgress?.(progress);
+      // Para testing, usar upload directo
+      setUploadStage('Subiendo archivo...');
+      setUploadProgress(20);
+      onUploadProgress?.(20);
+
+      // Crear FormData
+      const formData = new FormData();
+      formData.append('file', file);
+
+      setUploadProgress(50);
+      onUploadProgress?.(50);
+
+      // Upload directo al endpoint de testing
+      const response = await fetch(
+        `http://localhost:8000/api/v1/declarations/${declarationId}/upload-testing/`,
+        {
+          method: 'POST',
+          body: formData,
         }
       );
 
-      onFileUploaded(document.id);
+      setUploadProgress(90);
+      onUploadProgress?.(90);
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: `HTTP ${response.status}` }));
+        throw new Error(errorData.error || `Error HTTP ${response.status}`);
+      }
+
+      const result = await response.json();
+      
+      setUploadProgress(100);
+      onUploadProgress?.(100);
+      setUploadStage('¡Completado!');
+
+      // Notificar que el upload fue exitoso
+      onFileUploaded(result.document_id);
       
     } catch (err: any) {
       console.error('Error uploading file:', err);

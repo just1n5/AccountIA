@@ -56,7 +56,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           console.log('📤 Sending token to backend...');
           
           try {
-            const response = await api.post('/auth/session/', { firebase_token: token });
+            const response = await api.post('/api/v1/auth/session/', { firebase_token: token });
             console.log('✅ Backend response:', response);
           } catch (backendError) {
             console.error('❌ Error syncing with backend:', backendError);
@@ -102,7 +102,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // Sincronizar con el backend
       const token = await userCredential.user.getIdToken();
       console.log('📤 Syncing with backend...');
-      const response = await api.post('/auth/session/', { firebase_token: token });
+      const response = await api.post('/api/v1/auth/session/', { firebase_token: token });
       console.log('✅ Backend sync successful:', response);
     } catch (err: any) {
       console.error('❌ Login error:', err);
@@ -123,7 +123,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       
       // Sincronizar con el backend
       const token = await userCredential.user.getIdToken();
-      await api.post('/auth/session/', { firebase_token: token });
+      await api.post('/api/v1/auth/session/', { firebase_token: token });
     } catch (err: any) {
       setError(getErrorMessage(err));
       throw err;
@@ -158,7 +158,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       
       // Sincronizar con el backend
       const token = await userCredential.user.getIdToken();
-      await api.post('/auth/session/', { firebase_token: token });
+      await api.post('/api/v1/auth/session/', { firebase_token: token });
     } catch (err: any) {
       setError(getErrorMessage(err));
       throw err;

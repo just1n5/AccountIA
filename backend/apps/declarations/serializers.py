@@ -211,12 +211,13 @@ class CreateDeclarationSerializer(serializers.ModelSerializer):
             user, created = User.objects.get_or_create(
                 email='test@accountia.co',
                 defaults={
+                    'username': 'test_user',  # Agregar username requerido
                     'first_name': 'Test',
                     'last_name': 'User',
                     'is_active': True
                 }
             )
-            print(f"🔧 TESTING: Usuario creado/obtenido: {user.email}")
+            print(f"🔧 TESTING: Usuario {'creado' if created else 'obtenido'}: {user.email}")
         else:
             user = request.user
             print(f"🔧 TESTING: Usuario existente: {user}")

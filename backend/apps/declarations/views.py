@@ -36,13 +36,13 @@ class DeclarationViewSet(viewsets.ModelViewSet):
         Filtra las declaraciones por el usuario actual.
         """
         # TESTING: Siempre retornar todas las declaraciones para testing
-        print(f"🔍 DEBUG: self.request.user = {self.request.user}")
-        print(f"🔍 DEBUG: type(self.request.user) = {type(self.request.user)}")
+        print(f"[DEBUG] self.request.user = {self.request.user}")
+        print(f"[DEBUG] type(self.request.user) = {type(self.request.user)}")
         
         # En modo testing, retornar todas las declaraciones
         from django.conf import settings
         dev_testing = getattr(settings, 'DEV_SKIP_AUTH_FOR_TESTING', False)
-        print(f"🔍 DEBUG: DEV_SKIP_AUTH_FOR_TESTING = {dev_testing}")
+        print(f"[DEBUG] DEV_SKIP_AUTH_FOR_TESTING = {dev_testing}")
         
         # FORZAR MODO TESTING TEMPORALMENTE
         return Declaration.objects.all().select_related('user').prefetch_related('documents', 'income_records')

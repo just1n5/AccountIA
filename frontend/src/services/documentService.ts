@@ -159,10 +159,28 @@ class DocumentService {
    */
   async getByDeclaration(declarationId: string): Promise<Document[]> {
     try {
-      const response = await api.get<DocumentListResponse>(
+      const response = await api.get<any>(
         `${this.baseUrl}/declarations/${declarationId}/documents/`
       );
-      return response.documents || response as any || [];
+      
+      // DEBUG: Verificar estructura de respuesta
+      console.log('documentService.getByDeclaration - response:', response);
+      
+      // Manejar diferentes estructuras de respuesta
+      if (response.results && Array.isArray(response.results)) {
+        // Respuesta paginada: {results: [], count: number}
+        return response.results;
+      } else if (response.documents && Array.isArray(response.documents)) {
+        // Respuesta con propiedad documents: {documents: []}
+        return response.documents;
+      } else if (Array.isArray(response)) {
+        // Respuesta directa como array: []
+        return response;
+      } else {
+        // Fallback a array vacío
+        console.warn('Unexpected response structure for documents:', response);
+        return [];
+      }
     } catch (error: any) {
       console.error('Error getting documents by declaration:', error);
       throw new Error(
@@ -354,6 +372,56 @@ class DocumentService {
     }
 
     return { valid: true };
+  }
+
+  /**
+   * Upload directo para modo testing (más simple)
+   */
+  async uploadDirect(
+    declarationId: string,
+    file: File,
+    onProgress?: (progress: number) => void
+  ): Promise<any> {
+    try {
+      // Validar archivo
+      const validation = this.validateFile(file);
+      if (!validation.valid) {
+        throw new Error(validation.error);
+      }
+
+      onProgress?.(10);
+
+      // Crear FormData
+      const formData = new FormData();
+      formData.append('file', file);
+
+      onProgress?.(30);
+
+      // Upload directo usando fetch para mostrar progreso
+      const response = await fetch(
+        `${this.baseUrl}/declarations/${declarationId}/documents/upload_direct/`,
+        {
+          method: 'POST',
+          body: formData,
+          // No establecer Content-Type, let browser handle it for FormData
+        }
+      );
+
+      onProgress?.(90);
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || `HTTP ${response.status}`);
+      }
+
+      const result = await response.json();
+      onProgress?.(100);
+
+      return result;
+    } catch (error) {
+      console.error('Error in direct upload:', error);
+      throw error;
+    }
   }
 
   /**

@@ -159,23 +159,52 @@ class ApiClient {
         results: [
           {
             id: 'demo-declaration-1',
-            name: 'Declaración Demo 2024',
-            tax_year: 2024,
+            user_id: 'demo-user-1',
+            fiscal_year: 2024,
             status: 'draft',
+            status_display: 'Borrador',
+            total_income: '50000000',
+            total_withholdings: '5000000',
+            preliminary_tax: null,
+            balance: null,
+            document_count: 0,
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString()
+          },
+          {
+            id: 'demo-declaration-2',
+            user_id: 'demo-user-1',
+            fiscal_year: 2023,
+            status: 'completed',
+            status_display: 'Completada',
+            total_income: '45000000',
+            total_withholdings: '4500000',
+            preliminary_tax: '2500000',
+            balance: '-2000000',
+            document_count: 3,
+            created_at: new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString(),
+            updated_at: new Date(Date.now() - 300 * 24 * 60 * 60 * 1000).toISOString()
           }
         ],
-        count: 1
+        count: 2
       };
     }
     
     if (url.includes('/declarations/') && method === 'POST') {
+      // Extraer fiscal_year del request data si está disponible
+      const currentYear = new Date().getFullYear() - 1;
+      
       return {
         id: 'demo-declaration-' + Date.now(),
-        name: 'Nueva Declaración',
-        tax_year: 2024,
+        user_id: 'demo-user-1',
+        fiscal_year: currentYear,
         status: 'draft',
+        status_display: 'Borrador',
+        total_income: '0',
+        total_withholdings: '0',
+        preliminary_tax: null,
+        balance: null,
+        document_count: 0,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
       };

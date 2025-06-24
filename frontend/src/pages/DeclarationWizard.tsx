@@ -1,1 +1,448 @@
-import React, { useState, useEffect } from 'react';\nimport { useParams, useNavigate } from 'react-router-dom';\nimport { ArrowLeft, ArrowRight, CheckCircle } from 'lucide-react';\nimport { Button } from '../components/ui/Button';\nimport { Card } from '../components/ui/Card';\nimport { Alert } from '../components/ui/Alert';\nimport { LoadingSpinner } from '../components/ui/LoadingSpinner';\nimport FileUpload from '../components/declarations/FileUpload';\nimport ProcessingStatus from '../components/declarations/ProcessingStatus';\nimport DataReview from '../components/declarations/DataReview';\nimport declarationService, { Declaration } from '../services/declarationService';\nimport documentService, { Document } from '../services/documentService';\n\nenum WizardStep {\n  UPLOAD = 'upload',\n  PROCESSING = 'processing',\n  REVIEW = 'review',\n  COMPLETE = 'complete'\n}\n\nconst DeclarationWizard: React.FC = () => {\n  const { declarationId } = useParams<{ declarationId: string }>();\n  const navigate = useNavigate();\n  \n  const [currentStep, setCurrentStep] = useState<WizardStep>(WizardStep.UPLOAD);\n  const [declaration, setDeclaration] = useState<Declaration | null>(null);\n  const [documents, setDocuments] = useState<Document[]>([]);\n  const [isLoading, setIsLoading] = useState(true);\n  const [error, setError] = useState<string | null>(null);\n  const [uploadProgress, setUploadProgress] = useState(0);\n  const [processingStatus, setProcessingStatus] = useState('');\n\n  // Cargar declaración y documentos al montar el componente\n  useEffect(() => {\n    if (declarationId) {\n      loadDeclarationData();\n    }\n  }, [declarationId]);\n\n  // Polling para verificar el estado del procesamiento\n  useEffect(() => {\n    let interval: NodeJS.Timeout;\n    \n    if (currentStep === WizardStep.PROCESSING) {\n      interval = setInterval(() => {\n        checkProcessingStatus();\n      }, 3000); // Verificar cada 3 segundos\n    }\n    \n    return () => {\n      if (interval) {\n        clearInterval(interval);\n      }\n    };\n  }, [currentStep]);\n\n  const loadDeclarationData = async () => {\n    try {\n      setIsLoading(true);\n      setError(null);\n      \n      if (!declarationId) {\n        throw new Error('ID de declaración no encontrado');\n      }\n\n      // Cargar declaración\n      const declarationData = await declarationService.getById(declarationId);\n      setDeclaration(declarationData);\n\n      // Cargar documentos\n      await loadDocuments();\n      \n      // Determinar el paso actual basado en el estado\n      await determineCurrentStep();\n      \n    } catch (err: any) {\n      console.error('Error loading declaration data:', err);\n      setError(err.message || 'Error cargando declaración');\n    } finally {\n      setIsLoading(false);\n    }\n  };\n\n  const loadDocuments = async () => {\n    try {\n      if (!declarationId) return;\n      \n      const documentsData = await documentService.getByDeclaration(declarationId);\n      setDocuments(documentsData);\n    } catch (err) {\n      console.error('Error loading documents:', err);\n    }\n  };\n\n  const determineCurrentStep = async () => {\n    try {\n      if (!declarationId) return;\n      \n      const hasProcessedExogena = await documentService.hasProcessedExogena(declarationId);\n      \n      if (hasProcessedExogena) {\n        setCurrentStep(WizardStep.REVIEW);\n      } else {\n        const exogenaDoc = documents.find(doc => doc.file_type === 'exogena_report');\n        \n        if (!exogenaDoc) {\n          setCurrentStep(WizardStep.UPLOAD);\n        } else if (exogenaDoc.upload_status === 'processing') {\n          setCurrentStep(WizardStep.PROCESSING);\n          setProcessingStatus('Procesando archivo...');\n        } else if (exogenaDoc.upload_status === 'error') {\n          setCurrentStep(WizardStep.UPLOAD);\n          setError('Error procesando archivo. Por favor, inténtalo de nuevo.');\n        } else {\n          setProcessingStatus('Procesando archivo...');\n        }\n      }\n    } catch (err) {\n      console.error('Error determining current step:', err);\n    }\n  };\n\n  const checkProcessingStatus = async () => {\n    try {\n      if (!declarationId) return;\n      \n      await loadDocuments();\n      const exogenaDoc = documents.find(doc => doc.file_type === 'exogena_report');\n      \n      if (exogenaDoc) {\n        if (exogenaDoc.upload_status === 'processed') {\n          setCurrentStep(WizardStep.REVIEW);\n          setProcessingStatus('¡Procesamiento completado!');\n        } else if (exogenaDoc.upload_status === 'error') {\n          setCurrentStep(WizardStep.UPLOAD);\n          setError('Error procesando archivo. Por favor, inténtalo de nuevo.');\n        } else {\n          setProcessingStatus('Procesando archivo...');\n        }\n      }\n    } catch (err) {\n      console.error('Error checking processing status:', err);\n    }\n  };\n\n  // Handlers de eventos\n  const handleFileUploaded = async (documentId: string) => {\n    try {\n      setCurrentStep(WizardStep.PROCESSING);\n      setUploadProgress(100);\n      setProcessingStatus('Archivo subido, iniciando procesamiento...');\n        \n      // Recargar documentos\n      await loadDocuments();\n    } catch (err) {\n      setError('Error después de subir archivo');\n      console.error('Error handling file upload:', err);\n    }\n  };\n\n  const handleUploadProgress = (progress: number) => {\n    setUploadProgress(progress);\n  };\n\n  const handleReprocess = async () => {\n    const exogenaDoc = documents.find(doc => doc.file_type === 'exogena_report');\n    if (!exogenaDoc) return;\n      \n    try {\n      await documentService.reprocess(exogenaDoc.id);\n      setCurrentStep(WizardStep.PROCESSING);\n      setError(null);\n    } catch (err) {\n      setError('Error iniciando re-procesamiento');\n      console.error('Error reprocessing:', err);\n    }\n  };\n\n  const handleContinueToReview = () => {\n    setCurrentStep(WizardStep.REVIEW);\n  };\n\n  const handleBackToUpload = () => {\n    setCurrentStep(WizardStep.UPLOAD);\n    setError(null);\n  };\n\n  const handleCompleteDeclaration = async () => {\n    try {\n      if (!declaration) return;\n      \n      await declarationService.markAsCompleted(declaration.id);\n      setCurrentStep(WizardStep.COMPLETE);\n    } catch (err) {\n      setError('Error completando declaración');\n      console.error('Error completing declaration:', err);\n    }\n  };\n\n  // Renderizado condicional por paso\n  const renderStepContent = () => {\n    switch (currentStep) {\n      case WizardStep.UPLOAD:\n        return (\n          <FileUpload\n            declarationId={declarationId!}\n            onFileUploaded={handleFileUploaded}\n            onUploadProgress={handleUploadProgress}\n            existingDocuments={documents}\n            onReprocess={handleReprocess}\n          />\n        );\n          \n      case WizardStep.PROCESSING:\n        return (\n          <ProcessingStatus\n            status={processingStatus}\n            progress={uploadProgress}\n            onCheckStatus={checkProcessingStatus}\n          />\n        );\n          \n      case WizardStep.REVIEW:\n        const exogenaDoc = documents.find(doc =>\n          doc.file_type === 'exogena_report' && doc.upload_status === 'processed'\n        );\n          \n        return (\n          <DataReview\n            declarationId={declarationId!}\n            document={exogenaDoc}\n            onComplete={handleCompleteDeclaration}\n            onBackToUpload={handleBackToUpload}\n          />\n        );\n          \n      case WizardStep.COMPLETE:\n        return (\n          <Card className=\"p-8 text-center\">\n            <CheckCircle className=\"w-16 h-16 text-green-500 mx-auto mb-6\" />\n            <h2 className=\"text-2xl font-bold text-gray-900 mb-4\">\n              ¡Declaración Completada!\n            </h2>\n            <p className=\"text-gray-600 mb-6\">\n              Tu declaración de renta ha sido procesada exitosamente.\n            </p>\n            <div className=\"flex justify-center space-x-4\">\n              <Button\n                onClick={() => navigate('/app/declarations')}\n                variant=\"outline\"\n              >\n                Ver Todas las Declaraciones\n              </Button>\n              <Button\n                onClick={() => navigate('/app')}\n              >\n                Ir al Dashboard\n              </Button>\n            </div>\n          </Card>\n        );\n          \n      default:\n        return null;\n    }\n  };\n\n  const getStepNumber = (step: WizardStep): number => {\n    switch (step) {\n      case WizardStep.UPLOAD: return 1;\n      case WizardStep.PROCESSING: return 2;\n      case WizardStep.REVIEW: return 3;\n      case WizardStep.COMPLETE: return 4;\n      default: return 1;\n    }\n  };\n\n  const getStepTitle = (step: WizardStep): string => {\n    switch (step) {\n      case WizardStep.UPLOAD: return 'Subir Documentos';\n      case WizardStep.PROCESSING: return 'Procesamiento';\n      case WizardStep.REVIEW: return 'Revisar Información';\n      case WizardStep.COMPLETE: return 'Completado';\n      default: return '';\n    }\n  };\n\n  const isStepCompleted = (step: WizardStep): boolean => {\n    const currentStepNumber = getStepNumber(currentStep);\n    const stepNumber = getStepNumber(step);\n    return stepNumber < currentStepNumber || currentStep === WizardStep.COMPLETE;\n  };\n\n  const isStepCurrent = (step: WizardStep): boolean => {\n    return step === currentStep;\n  };\n\n  if (isLoading) {\n    return (\n      <div className=\"min-h-screen flex items-center justify-center\">\n        <LoadingSpinner size=\"large\" />\n      </div>\n    );\n  }\n\n  if (!declaration) {\n    return (\n      <div className=\"min-h-screen flex items-center justify-center\">\n        <Card className=\"p-8 text-center\">\n          <h2 className=\"text-xl font-semibold text-gray-900 mb-4\">\n            Declaración no encontrada\n          </h2>\n          <Button onClick={() => navigate('/app')}>\n            Volver al Dashboard\n          </Button>\n        </Card>\n      </div>\n    );\n  }\n\n  return (\n    <div className=\"min-h-screen bg-gray-50\">\n      {/* Header */}\n      <div className=\"bg-white border-b border-gray-200\">\n        <div className=\"max-w-4xl mx-auto px-4 sm:px-6 lg:px-8\">\n          <div className=\"flex items-center justify-between h-16\">\n            <div className=\"flex items-center space-x-4\">\n              <Button\n                variant=\"ghost\"\n                size=\"sm\"\n                onClick={() => navigate('/app')}\n                className=\"flex items-center\"\n              >\n                <ArrowLeft className=\"w-4 h-4 mr-2\" />\n                Volver\n              </Button>\n              <div>\n                <h1 className=\"text-lg font-semibold text-gray-900\">\n                  Declaración de Renta {declaration.fiscal_year}\n                </h1>\n                <p className=\"text-sm text-gray-600\">\n                  {getStepTitle(currentStep)}\n                </p>\n              </div>\n            </div>\n          </div>\n        </div>\n      </div>\n\n      <div className=\"max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8\">\n        {/* Stepper */}\n        <div className=\"mb-8\">\n          <nav aria-label=\"Progress\">\n            <ol className=\"flex items-center\">\n              {Object.values(WizardStep).filter(step => step !== WizardStep.COMPLETE).map((step, index) => {\n                const stepNumber = getStepNumber(step);\n                const isCompleted = isStepCompleted(step);\n                const isCurrent = isStepCurrent(step);\n                const isLast = index === Object.values(WizardStep).filter(s => s !== WizardStep.COMPLETE).length - 1;\n\n                return (\n                  <li key={step} className={`relative ${!isLast ? 'pr-8 sm:pr-20' : ''}`}>\n                    {!isLast && (\n                      <div className=\"absolute inset-0 flex items-center\" aria-hidden=\"true\">\n                        <div className={`h-0.5 w-full ${\n                          isCompleted ? 'bg-blue-600' : 'bg-gray-200'\n                        }`} />\n                      </div>\n                    )}\n                    <div className=\"relative flex items-center justify-center\">\n                      {isCompleted ? (\n                        <div className=\"h-8 w-8 rounded-full bg-blue-600 flex items-center justify-center\">\n                          <CheckCircle className=\"w-5 h-5 text-white\" />\n                        </div>\n                      ) : isCurrent ? (\n                        <div className=\"h-8 w-8 rounded-full border-2 border-blue-600 bg-white flex items-center justify-center\">\n                          <span className=\"h-2.5 w-2.5 rounded-full bg-blue-600\" />\n                        </div>\n                      ) : (\n                        <div className=\"h-8 w-8 rounded-full border-2 border-gray-300 bg-white flex items-center justify-center\">\n                          <span className=\"h-2.5 w-2.5 rounded-full bg-transparent\" />\n                        </div>\n                      )}\n                    </div>\n                    <div className=\"absolute top-10 left-1/2 transform -translate-x-1/2\">\n                      <span className={`text-xs font-medium ${\n                        isCurrent ? 'text-blue-600' : isCompleted ? 'text-gray-900' : 'text-gray-500'\n                      }`}>\n                        {getStepTitle(step)}\n                      </span>\n                    </div>\n                  </li>\n                );\n              })}\n            </ol>\n          </nav>\n        </div>\n\n        {/* Error Alert */}\n        {error && (\n          <Alert type=\"error\" className=\"mb-6\">\n            <span>{error}</span>\n          </Alert>\n        )}\n\n        {/* Step Content */}\n        <div className=\"space-y-6\">\n          {renderStepContent()}\n        </div>\n\n        {/* Navigation (only show in certain steps) */}\n        {(currentStep === WizardStep.REVIEW) && (\n          <div className=\"mt-8 flex justify-between\">\n            <Button\n              variant=\"outline\"\n              onClick={handleBackToUpload}\n            >\n              <ArrowLeft className=\"w-4 h-4 mr-2\" />\n              Volver a Subir Archivo\n            </Button>\n            \n            <Button\n              onClick={handleCompleteDeclaration}\n            >\n              Completar Declaración\n              <ArrowRight className=\"w-4 h-4 ml-2\" />\n            </Button>\n          </div>\n        )}\n      </div>\n    </div>\n  );\n};\n\nexport default DeclarationWizard;
+import React, { useState, useEffect } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
+import { ArrowLeft, ArrowRight, CheckCircle } from 'lucide-react';
+import { Button } from '../components/ui/Button';
+import { Card } from '../components/ui/Card';
+import { Alert } from '../components/ui/Alert';
+import { LoadingSpinner } from '../components/ui/LoadingSpinner';
+import FileUpload from '../components/declarations/FileUpload';
+import ProcessingStatus from '../components/declarations/ProcessingStatus';
+import DataReview from '../components/declarations/DataReview';
+import declarationService, { Declaration } from '../services/declarationService';
+import documentService, { Document } from '../services/documentService';
+
+enum WizardStep {
+  UPLOAD = 'upload',
+  PROCESSING = 'processing',
+  REVIEW = 'review',
+  COMPLETE = 'complete'
+}
+
+const DeclarationWizard: React.FC = () => {
+  const { declarationId } = useParams<{ declarationId: string }>();
+  const navigate = useNavigate();
+  
+  // DEBUG: Verificar declarationId desde URL
+  console.log('DeclarationWizard - declarationId desde useParams:', declarationId);
+  console.log('DeclarationWizard - URL actual:', window.location.pathname);
+  
+  const [currentStep, setCurrentStep] = useState<WizardStep>(WizardStep.UPLOAD);
+  const [declaration, setDeclaration] = useState<Declaration | null>(null);
+  const [documents, setDocuments] = useState<Document[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [processingStatus, setProcessingStatus] = useState('');
+
+  // Cargar declaración y documentos al montar el componente
+  useEffect(() => {
+    if (declarationId) {
+      loadDeclarationData();
+    }
+  }, [declarationId]);
+
+  // Polling para verificar el estado del procesamiento
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+    
+    if (currentStep === WizardStep.PROCESSING) {
+      interval = setInterval(() => {
+        checkProcessingStatus();
+      }, 3000); // Verificar cada 3 segundos
+    }
+    
+    return () => {
+      if (interval) {
+        clearInterval(interval);
+      }
+    };
+  }, [currentStep]);
+
+  const loadDeclarationData = async () => {
+    try {
+      setIsLoading(true);
+      setError(null);
+      
+      if (!declarationId) {
+        throw new Error('ID de declaración no encontrado');
+      }
+
+      // Cargar declaración
+      const declarationData = await declarationService.getById(declarationId);
+      setDeclaration(declarationData);
+
+      // Cargar documentos
+      await loadDocuments();
+      
+      // Determinar el paso actual basado en el estado
+      await determineCurrentStep();
+      
+    } catch (err: any) {
+      console.error('Error loading declaration data:', err);
+      setError(err.message || 'Error cargando declaración');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const loadDocuments = async () => {
+    try {
+      if (!declarationId) return;
+      
+      // Con documentService.getByDeclaration() ya manejando la extracción,
+      // esto debería retornar directamente el array
+      const documentsArray = await documentService.getByDeclaration(declarationId);
+      console.log('DeclarationWizard - documentsArray from service:', documentsArray);
+      
+      setDocuments(documentsArray);
+    } catch (err) {
+      console.error('Error loading documents:', err);
+    }
+  };
+
+  const determineCurrentStep = async () => {
+    try {
+      if (!declarationId) return;
+      
+      const hasProcessedExogena = await documentService.hasProcessedExogena(declarationId);
+      
+      if (hasProcessedExogena) {
+        setCurrentStep(WizardStep.REVIEW);
+      } else {
+        const exogenaDoc = documents.find(doc => doc.file_type === 'exogena_report');
+        
+        if (!exogenaDoc) {
+          setCurrentStep(WizardStep.UPLOAD);
+        } else if (exogenaDoc.upload_status === 'processing') {
+          setCurrentStep(WizardStep.PROCESSING);
+          setProcessingStatus('Procesando archivo...');
+        } else if (exogenaDoc.upload_status === 'error') {
+          setCurrentStep(WizardStep.UPLOAD);
+          setError('Error procesando archivo. Por favor, inténtalo de nuevo.');
+        } else {
+          setProcessingStatus('Procesando archivo...');
+        }
+      }
+    } catch (err) {
+      console.error('Error determining current step:', err);
+    }
+  };
+
+  const checkProcessingStatus = async () => {
+    try {
+      if (!declarationId) return;
+      
+      await loadDocuments();
+      const exogenaDoc = documents.find(doc => doc.file_type === 'exogena_report');
+      
+      if (exogenaDoc) {
+        if (exogenaDoc.upload_status === 'processed') {
+          setCurrentStep(WizardStep.REVIEW);
+          setProcessingStatus('¡Procesamiento completado!');
+        } else if (exogenaDoc.upload_status === 'error') {
+          setCurrentStep(WizardStep.UPLOAD);
+          setError('Error procesando archivo. Por favor, inténtalo de nuevo.');
+        } else {
+          setProcessingStatus('Procesando archivo...');
+        }
+      }
+    } catch (err) {
+      console.error('Error checking processing status:', err);
+    }
+  };
+
+  // Handlers de eventos
+  const handleFileUploaded = async (documentId: string) => {
+    try {
+      setCurrentStep(WizardStep.PROCESSING);
+      setUploadProgress(100);
+      setProcessingStatus('Archivo subido, iniciando procesamiento...');
+        
+      // Recargar documentos
+      await loadDocuments();
+    } catch (err) {
+      setError('Error después de subir archivo');
+      console.error('Error handling file upload:', err);
+    }
+  };
+
+  const handleUploadProgress = (progress: number) => {
+    setUploadProgress(progress);
+  };
+
+  const handleReprocess = async () => {
+    const exogenaDoc = documents.find(doc => doc.file_type === 'exogena_report');
+    if (!exogenaDoc) return;
+      
+    try {
+      await documentService.reprocess(exogenaDoc.id);
+      setCurrentStep(WizardStep.PROCESSING);
+      setError(null);
+    } catch (err) {
+      setError('Error iniciando re-procesamiento');
+      console.error('Error reprocessing:', err);
+    }
+  };
+
+  const handleContinueToReview = () => {
+    setCurrentStep(WizardStep.REVIEW);
+  };
+
+  const handleBackToUpload = () => {
+    setCurrentStep(WizardStep.UPLOAD);
+    setError(null);
+  };
+
+  const handleCompleteDeclaration = async () => {
+    try {
+      if (!declaration) return;
+      
+      await declarationService.markAsCompleted(declaration.id);
+      setCurrentStep(WizardStep.COMPLETE);
+    } catch (err) {
+      setError('Error completando declaración');
+      console.error('Error completing declaration:', err);
+    }
+  };
+
+  // Renderizado condicional por paso
+  const renderStepContent = () => {
+    // DEBUG: Verificar estado de documents
+    console.log('DeclarationWizard - documents state:', documents);
+    console.log('DeclarationWizard - documents tipo:', typeof documents);
+    console.log('DeclarationWizard - documents es array?:', Array.isArray(documents));
+    
+    switch (currentStep) {
+      case WizardStep.UPLOAD:
+        return (
+          <FileUpload
+            declarationId={declarationId!}
+            onFileUploaded={handleFileUploaded}
+            onUploadProgress={handleUploadProgress}
+            existingDocuments={documents} // Ya debería ser array siempre
+            onReprocess={handleReprocess}
+          />
+        );
+          
+      case WizardStep.PROCESSING:
+        return (
+          <ProcessingStatus
+            status={processingStatus}
+            progress={uploadProgress}
+            onCheckStatus={checkProcessingStatus}
+          />
+        );
+          
+      case WizardStep.REVIEW:
+        const exogenaDoc = documents.find(doc =>
+          doc.file_type === 'exogena_report' && doc.upload_status === 'processed'
+        );
+          
+        return (
+          <DataReview
+            declarationId={declarationId!}
+            document={exogenaDoc}
+            onComplete={handleCompleteDeclaration}
+            onBackToUpload={handleBackToUpload}
+          />
+        );
+          
+      case WizardStep.COMPLETE:
+        return (
+          <Card className="p-8 text-center">
+            <CheckCircle className="w-16 h-16 text-green-500 mx-auto mb-6" />
+            <h2 className="text-2xl font-bold text-gray-900 mb-4">
+              ¡Declaración Completada!
+            </h2>
+            <p className="text-gray-600 mb-6">
+              Tu declaración de renta ha sido procesada exitosamente.
+            </p>
+            <div className="flex justify-center space-x-4">
+              <Button
+                onClick={() => navigate('/app/declarations')}
+                variant="outline"
+              >
+                Ver Todas las Declaraciones
+              </Button>
+              <Button
+                onClick={() => navigate('/app')}
+              >
+                Ir al Dashboard
+              </Button>
+            </div>
+          </Card>
+        );
+          
+      default:
+        return null;
+    }
+  };
+
+  const getStepNumber = (step: WizardStep): number => {
+    switch (step) {
+      case WizardStep.UPLOAD: return 1;
+      case WizardStep.PROCESSING: return 2;
+      case WizardStep.REVIEW: return 3;
+      case WizardStep.COMPLETE: return 4;
+      default: return 1;
+    }
+  };
+
+  const getStepTitle = (step: WizardStep): string => {
+    switch (step) {
+      case WizardStep.UPLOAD: return 'Subir Documentos';
+      case WizardStep.PROCESSING: return 'Procesamiento';
+      case WizardStep.REVIEW: return 'Revisar Información';
+      case WizardStep.COMPLETE: return 'Completado';
+      default: return '';
+    }
+  };
+
+  const isStepCompleted = (step: WizardStep): boolean => {
+    const currentStepNumber = getStepNumber(currentStep);
+    const stepNumber = getStepNumber(step);
+    return stepNumber < currentStepNumber || currentStep === WizardStep.COMPLETE;
+  };
+
+  const isStepCurrent = (step: WizardStep): boolean => {
+    return step === currentStep;
+  };
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <LoadingSpinner size="large" />
+      </div>
+    );
+  }
+
+  if (!declaration) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <Card className="p-8 text-center">
+          <h2 className="text-xl font-semibold text-gray-900 mb-4">
+            Declaración no encontrada
+          </h2>
+          <Button onClick={() => navigate('/app')}>
+            Volver al Dashboard
+          </Button>
+        </Card>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-gray-50">
+      {/* Header */}
+      <div className="bg-white border-b border-gray-200">
+        <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex items-center justify-between h-16">
+            <div className="flex items-center space-x-4">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => navigate('/app')}
+                className="flex items-center"
+              >
+                <ArrowLeft className="w-4 h-4 mr-2" />
+                Volver
+              </Button>
+              <div>
+                <h1 className="text-lg font-semibold text-gray-900">
+                  Declaración de Renta {declaration.fiscal_year}
+                </h1>
+                <p className="text-sm text-gray-600">
+                  {getStepTitle(currentStep)}
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {/* Stepper */}
+        <div className="mb-8">
+          <nav aria-label="Progress">
+            <ol className="flex items-center">
+              {Object.values(WizardStep).filter(step => step !== WizardStep.COMPLETE).map((step, index) => {
+                const stepNumber = getStepNumber(step);
+                const isCompleted = isStepCompleted(step);
+                const isCurrent = isStepCurrent(step);
+                const isLast = index === Object.values(WizardStep).filter(s => s !== WizardStep.COMPLETE).length - 1;
+
+                return (
+                  <li key={step} className={`relative ${!isLast ? 'pr-8 sm:pr-20' : ''}`}>
+                    {!isLast && (
+                      <div className="absolute inset-0 flex items-center" aria-hidden="true">
+                        <div className={`h-0.5 w-full ${
+                          isCompleted ? 'bg-blue-600' : 'bg-gray-200'
+                        }`} />
+                      </div>
+                    )}
+                    <div className="relative flex items-center justify-center">
+                      {isCompleted ? (
+                        <div className="h-8 w-8 rounded-full bg-blue-600 flex items-center justify-center">
+                          <CheckCircle className="w-5 h-5 text-white" />
+                        </div>
+                      ) : isCurrent ? (
+                        <div className="h-8 w-8 rounded-full border-2 border-blue-600 bg-white flex items-center justify-center">
+                          <span className="h-2.5 w-2.5 rounded-full bg-blue-600" />
+                        </div>
+                      ) : (
+                        <div className="h-8 w-8 rounded-full border-2 border-gray-300 bg-white flex items-center justify-center">
+                          <span className="h-2.5 w-2.5 rounded-full bg-transparent" />
+                        </div>
+                      )}
+                    </div>
+                    <div className="absolute top-10 left-1/2 transform -translate-x-1/2">
+                      <span className={`text-xs font-medium ${
+                        isCurrent ? 'text-blue-600' : isCompleted ? 'text-gray-900' : 'text-gray-500'
+                      }`}>
+                        {getStepTitle(step)}
+                      </span>
+                    </div>
+                  </li>
+                );
+              })}
+            </ol>
+          </nav>
+        </div>
+
+        {/* Error Alert */}
+        {error && (
+          <Alert type="error" className="mb-6">
+            <span>{error}</span>
+          </Alert>
+        )}
+
+        {/* Step Content */}
+        <div className="space-y-6">
+          {renderStepContent()}
+        </div>
+
+        {/* Navigation (only show in certain steps) */}
+        {(currentStep === WizardStep.REVIEW) && (
+          <div className="mt-8 flex justify-between">
+            <Button
+              variant="outline"
+              onClick={handleBackToUpload}
+            >
+              <ArrowLeft className="w-4 h-4 mr-2" />
+              Volver a Subir Archivo
+            </Button>
+            
+            <Button
+              onClick={handleCompleteDeclaration}
+            >
+              Completar Declaración
+              <ArrowRight className="w-4 h-4 ml-2" />
+            </Button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+export default DeclarationWizard;

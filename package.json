@@ -10,7 +10,9 @@
   ],
   "scripts": {
     "// === DESARROLLO GENERAL ===": "",
-    "dev": "concurrently \"npm run backend:dev\" \"npm run frontend:dev\" \"npm run celery:dev\"",
+    "dev": "set PYTHONIOENCODING=utf-8&& set PYTHONUTF8=1&& set PYTHONLEGACYWINDOWSSTDIO=1&& concurrently \"npm run backend:dev\" \"npm run frontend:dev\" \"npm run celery:dev\"",
+    "dev:windows": "powershell -ExecutionPolicy Bypass -File start_dev_windows.ps1",
+    "dev:safe": "set PYTHONIOENCODING=utf-8&& set PYTHONUTF8=1&& concurrently \"npm run backend:dev\" \"npm run frontend:dev\"",
     "setup": "npm run backend:setup && npm run frontend:setup",
     "clean": "npm run backend:clean && npm run frontend:clean",
     "stop": "npm run docker:stop",

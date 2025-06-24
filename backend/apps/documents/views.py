@@ -41,7 +41,7 @@ class DocumentViewSet(viewsets.ModelViewSet):
         Filtra documentos por declaración y usuario.
         """
         # TESTING: Simplificar para testing
-        print(f"🔍 DEBUG Documents: self.request.user = {self.request.user}")
+        print(f"[DEBUG] Documents: self.request.user = {self.request.user}")
         
         # Si viene en el contexto de una declaración específica
         declaration_id = self.kwargs.get('declaration_pk')
@@ -60,17 +60,217 @@ class DocumentViewSet(viewsets.ModelViewSet):
         ).select_related('declaration').order_by('-created_at')
     
     @action(detail=False, methods=['post'])
-    def initiate_upload(self, request, declaration_pk=None):
+    def upload_direct(self, request, declaration_pk=None):
+        """
+        Upload directo para modo testing (sin signed URLs).
+        """
+        from django.conf import settings
+        
+        # Solo disponible en modo testing
+        if not getattr(settings, 'DEV_SKIP_AUTH_FOR_TESTING', False):
+            return Response(
+                {'error': 'Endpoint solo disponible en modo testing'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # Validar que existe la declaración
+        declaration = get_object_or_404(Declaration, id=declaration_pk)
+        
+        # Obtener archivo del request
+        if 'file' not in request.FILES:
+            return Response(
+                {'error': 'No se envió ningún archivo'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        uploaded_file = request.FILES['file']
+        
+        # Validar tipo de archivo
+        allowed_extensions = ['.xlsx', '.xls']
+        file_ext = os.path.splitext(uploaded_file.name)[1].lower()
+        if file_ext not in allowed_extensions:
+            return Response(
+                {'error': 'Solo se permiten archivos Excel (.xlsx, .xls)'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        with transaction.atomic():
+            # Crear documento
+            document = Document.objects.create(
+                declaration=declaration,
+                file_name=uploaded_file.name,
+                original_file_name=uploaded_file.name,
+                file_size=uploaded_file.size,
+                file_type='exogena_report',
+                mime_type=uploaded_file.content_type,
+                description='Archivo de información exógena',
+                upload_status='uploaded',
+                uploaded_by=getattr(request, 'user', None)
+            )
+            
+            # Guardar archivo usando storage service
+            storage_service = get_storage_service()
+            storage_key = document.get_storage_key()
+            
+            try:
+                # Upload directo al storage
+                storage_info = storage_service.upload_file(
+                    file_obj=uploaded_file,
+                    blob_name=storage_key,
+                    content_type=uploaded_file.content_type
+                )
+                
+                document.storage_path = storage_key
+                document.upload_status = 'uploaded'
+                document.save()
+                
+                # Procesar archivo
+                if document.file_type == 'exogena_report':
+                    # En testing, usar datos demo
+                    from apps.documents.parsers.excel_parser import ExogenaParser
+                    parser = ExogenaParser()
+                    demo_data = parser.parse_demo_data()
+                    
+                    document.processed_data = demo_data
+                    document.upload_status = 'processed'
+                    document.save()
+                    
+                    # Actualizar declaración con datos demo
+                    declaration.total_income = str(demo_data.get('metadata', {}).get('total_ingresos', 0))
+                    declaration.total_withholdings = str(demo_data.get('metadata', {}).get('total_retenciones', 0))
+                    declaration.save()
+                    
+                logger.info(f"Archivo procesado en modo testing: {document.id}")
+                
+                return Response({
+                    'document_id': str(document.id),
+                    'status': 'processed',
+                    'processed_data': demo_data,
+                    'message': 'Archivo procesado con datos demo'
+                }, status=status.HTTP_201_CREATED)
+                
+            except Exception as e:
+                logger.error(f"Error al procesar archivo: {str(e)}")
+                document.mark_as_error([f"Error de procesamiento: {str(e)}"])
+                
+                return Response(
+                    {'error': f'Error al procesar archivo: {str(e)}'},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+    
+    @action(detail=False, methods=['post'])
+    def upload_direct(self, request, declaration_pk=None):
+        """
+        Upload directo para modo testing (sin signed URLs).
+        """
+        from django.conf import settings
+        
+        # Solo disponible en modo testing
+        if not getattr(settings, 'DEV_SKIP_AUTH_FOR_TESTING', False):
+            return Response(
+                {'error': 'Endpoint solo disponible en modo testing'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # Validar que existe la declaración
+        declaration = get_object_or_404(Declaration, id=declaration_pk)
+        
+        # Obtener archivo del request
+        if 'file' not in request.FILES:
+            return Response(
+                {'error': 'No se envió ningún archivo'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        uploaded_file = request.FILES['file']
+        
+        # Validar tipo de archivo
+        allowed_extensions = ['.xlsx', '.xls']
+        file_ext = os.path.splitext(uploaded_file.name)[1].lower()
+        if file_ext not in allowed_extensions:
+            return Response(
+                {'error': 'Solo se permiten archivos Excel (.xlsx, .xls)'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        with transaction.atomic():
+            # Crear documento
+            document = Document.objects.create(
+                declaration=declaration,
+                file_name=uploaded_file.name,
+                original_file_name=uploaded_file.name,
+                file_size=uploaded_file.size,
+                file_type='exogena_report',
+                mime_type=uploaded_file.content_type,
+                description='Archivo de información exógena',
+                upload_status='uploaded',
+                uploaded_by=getattr(request, 'user', None)
+            )
+            
+            # Guardar archivo usando storage service
+            storage_service = get_storage_service()
+            storage_key = document.get_storage_key()
+            
+            try:
+                # Upload directo al storage
+                storage_info = storage_service.upload_file(
+                    file_obj=uploaded_file,
+                    blob_name=storage_key,
+                    content_type=uploaded_file.content_type
+                )
+                
+                document.storage_path = storage_key
+                document.upload_status = 'uploaded'
+                document.save()
+                
+                # Procesar archivo
+                if document.file_type == 'exogena_report':
+                    # En testing, usar datos demo
+                    from apps.documents.parsers.excel_parser import ExogenaParser
+                    parser = ExogenaParser()
+                    demo_data = parser.parse_demo_data()
+                    
+                    document.processed_data = demo_data
+                    document.upload_status = 'processed'
+                    document.save()
+                    
+                    # Actualizar declaración con datos demo
+                    declaration.total_income = str(demo_data.get('metadata', {}).get('total_ingresos', 0))
+                    declaration.total_withholdings = str(demo_data.get('metadata', {}).get('total_retenciones', 0))
+                    declaration.save()
+                    
+                logger.info(f"Archivo procesado en modo testing: {document.id}")
+                
+                return Response({
+                    'document_id': str(document.id),
+                    'status': 'processed',
+                    'processed_data': demo_data,
+                    'message': 'Archivo procesado con datos demo'
+                }, status=status.HTTP_201_CREATED)
+                
+            except Exception as e:
+                logger.error(f"Error al procesar archivo: {str(e)}")
+                document.mark_as_error([f"Error de procesamiento: {str(e)}"])
+                
+                return Response(
+                    {'error': f'Error al procesar archivo: {str(e)}'},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
         """
         Inicia el proceso de carga de un documento.
         Retorna una URL firmada para que el cliente suba directamente a GCS.
         """
         # Validar que existe la declaración
-        declaration = get_object_or_404(
-            Declaration,
-            id=declaration_pk,
-            user=request.user
-        )
+        # TESTING: No validar usuario en modo testing
+        from django.conf import settings
+        if getattr(settings, 'DEV_SKIP_AUTH_FOR_TESTING', False) or not hasattr(request.user, 'id'):
+            declaration = get_object_or_404(Declaration, id=declaration_pk)
+        else:
+            declaration = get_object_or_404(
+                Declaration,
+                id=declaration_pk,
+                user=request.user
+            )
         
         # Validar que la declaración es editable
         if not declaration.is_editable:
@@ -100,7 +300,7 @@ class DocumentViewSet(viewsets.ModelViewSet):
                 mime_type=validated_data.get('mime_type', 'application/octet-stream'),
                 description=validated_data.get('description', ''),
                 upload_status='pending',
-                uploaded_by=request.user
+                uploaded_by=getattr(request, 'user', None)
             )
             
             # Generar URL firmada para subida
