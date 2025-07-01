@@ -61,23 +61,27 @@ REST_FRAMEWORK = {
     'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
 }
 
-# Database - SQLite para desarrollo (más simple)
+# Database - PostgreSQL para desarrollo
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+        'ENGINE': 'django.db.backends.postgresql',
+        'NAME': os.getenv('DB_NAME', 'accountia_dev'),
+        'USER': os.getenv('DB_USER', 'accountia_user'),
+        'PASSWORD': os.getenv('DB_PASSWORD', 'password123'),
+        'HOST': os.getenv('DB_HOST', '127.0.0.1'),
+        'PORT': os.getenv('DB_PORT', '5432'),
+        'OPTIONS': {
+            'connect_timeout': 10,
+            # 'options': '-c default_transaction_isolation=read committed'
+        },
     }
 }
 
-# Uncomment below to use PostgreSQL
+# SQLite backup (commented)
 # DATABASES = {
 #     'default': {
-#         'ENGINE': 'django.db.backends.postgresql',
-#         'NAME': os.getenv('DB_NAME', 'accountia_dev'),
-#         'USER': os.getenv('DB_USER', 'accountia_user'),
-#         'PASSWORD': os.getenv('DB_PASSWORD', 'accountia_password'),
-#         'HOST': os.getenv('DB_HOST', 'localhost'),  # Cambiado de 'postgres' a 'localhost'
-#         'PORT': os.getenv('DB_PORT', '5432'),
+#         'ENGINE': 'django.db.backends.sqlite3',
+#         'NAME': BASE_DIR / 'db.sqlite3',
 #     }
 # }
 

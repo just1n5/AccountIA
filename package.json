@@ -13,6 +13,7 @@
     "dev": "set PYTHONIOENCODING=utf-8&& set PYTHONUTF8=1&& set PYTHONLEGACYWINDOWSSTDIO=1&& concurrently \"npm run backend:dev\" \"npm run frontend:dev\" \"npm run celery:dev\"",
     "dev:windows": "powershell -ExecutionPolicy Bypass -File start_dev_windows.ps1",
     "dev:safe": "set PYTHONIOENCODING=utf-8&& set PYTHONUTF8=1&& concurrently \"npm run backend:dev\" \"npm run frontend:dev\"",
+    "dev:simple": "concurrently \"npm run backend:simple\" \"npm run frontend:dev\"",
     "setup": "npm run backend:setup && npm run frontend:setup",
     "clean": "npm run backend:clean && npm run frontend:clean",
     "stop": "npm run docker:stop",
@@ -27,7 +28,8 @@
     "frontend:lint": "cd frontend && npm run lint",
     
     "// === BACKEND ===": "",
-    "backend:dev": "cd backend && python manage.py runserver 0.0.0.0:8000",
+    "backend:dev": "start_backend_dev.bat",
+    "backend:simple": "cd backend && start_backend_simple.bat",
     "backend:setup": "npm run backend:install && npm run backend:migrate && npm run backend:collectstatic",
     "backend:install": "cd backend && pip install -r requirements.txt",
     "backend:install:windows": "powershell -ExecutionPolicy Bypass -File scripts/install_python_windows.ps1",

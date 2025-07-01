@@ -1,13 +1,14 @@
 """
-Vistas API para declaraciones.
+Vistas API para declaraciones - SIMPLIFICADAS PARA DESARROLLO.
 """
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated, AllowAny
+from rest_framework.permissions import AllowAny
 from django.shortcuts import get_object_or_404
 from django.db import transaction
 from django.utils import timezone
+from django.db import models
 
 from .models import Declaration, IncomeRecord
 from .serializers import (
@@ -15,10 +16,12 @@ from .serializers import (
     DeclarationDetailSerializer,
     CreateDeclarationSerializer,
     UpdateDeclarationStatusSerializer,
+    UpdateDeclarationSerializer,
+    DuplicateDeclarationSerializer,
+    BulkDeclarationActionSerializer,
+    DeclarationStatsSerializer,
     IncomeRecordSerializer
 )
-from apps.documents.tasks import process_declaration_documents
-from apps.common.permissions import get_testing_permission_classes
 
 import logging
 
@@ -27,25 +30,35 @@ logger = logging.getLogger(__name__)
 
 class DeclarationViewSet(viewsets.ModelViewSet):
     """
-    ViewSet para gestión de declaraciones.
+    ViewSet para gestión de declaraciones - SIMPLIFICADO PARA DESARROLLO.
     """
-    permission_classes = [AllowAny]  # TESTING: Sin permisos
+    permission_classes = [AllowAny]  # Sin permisos para desarrollo
     
     def get_queryset(self):
         """
-        Filtra las declaraciones por el usuario actual.
+        Retorna declaraciones con optimizaciones.
+        SIMPLIFICADO: Sin filtros de usuario para desarrollo.
         """
-        # TESTING: Siempre retornar todas las declaraciones para testing
-        print(f"[DEBUG] self.request.user = {self.request.user}")
-        print(f"[DEBUG] type(self.request.user) = {type(self.request.user)}")
+        print(f"[DEBUG] DeclarationViewSet.get_queryset()")
         
-        # En modo testing, retornar todas las declaraciones
-        from django.conf import settings
-        dev_testing = getattr(settings, 'DEV_SKIP_AUTH_FOR_TESTING', False)
-        print(f"[DEBUG] DEV_SKIP_AUTH_FOR_TESTING = {dev_testing}")
+        # Base queryset con optimizaciones
+        queryset = Declaration.objects.select_related('user').prefetch_related('documents', 'income_records')
         
-        # FORZAR MODO TESTING TEMPORALMENTE
-        return Declaration.objects.all().select_related('user').prefetch_related('documents', 'income_records')
+        # SIMPLIFICADO: En desarrollo, retornar todas las declaraciones activas
+        queryset = queryset.filter(is_active=True)
+        
+        # Filtros por parámetros de consulta
+        fiscal_year = self.request.query_params.get('fiscal_year')
+        status_filter = self.request.query_params.get('status')
+        
+        if fiscal_year:
+            queryset = queryset.filter(fiscal_year=fiscal_year)
+        
+        if status_filter:
+            queryset = queryset.filter(status=status_filter)
+        
+        print(f"[DEBUG] Queryset final: {queryset.count()} declaraciones")
+        return queryset.order_by('-created_at')
     
     def get_serializer_class(self):
         """
@@ -55,249 +68,218 @@ class DeclarationViewSet(viewsets.ModelViewSet):
             return DeclarationSummarySerializer
         elif self.action == 'create':
             return CreateDeclarationSerializer
-        elif self.action in ['retrieve', 'update', 'partial_update']:
+        elif self.action in ['retrieve']:
             return DeclarationDetailSerializer
+        elif self.action in ['update', 'partial_update']:
+            return UpdateDeclarationSerializer
         return DeclarationSummarySerializer
+    
+    def list(self, request, *args, **kwargs):
+        """
+        Lista declaraciones - SIMPLIFICADO.
+        """
+        print(f"[DEBUG] DeclarationViewSet.list() - START")
+        try:
+            queryset = self.get_queryset()
+            serializer = self.get_serializer(queryset, many=True)
+            
+            response_data = {
+                'results': serializer.data,
+                'count': queryset.count()
+            }
+            
+            print(f"[DEBUG] Lista exitosa: {len(serializer.data)} declaraciones")
+            return Response(response_data)
+            
+        except Exception as e:
+            print(f"[ERROR] Error en list(): {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return Response(
+                {'error': f'Error listando declaraciones: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
     
     def create(self, request, *args, **kwargs):
         """
-        Crea una nueva declaración.
+        Crea una nueva declaración - SIMPLIFICADO.
         """
-        serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
+        print(f"[DEBUG] DeclarationViewSet.create() - START")
+        print(f"[DEBUG] Request data: {request.data}")
         
-        with transaction.atomic():
-            declaration = serializer.save()
-            logger.info(f"Nueva declaración creada: {declaration.id} para el año {declaration.fiscal_year}")
-        
-        # Serializar la respuesta con el serializador detallado
-        response_serializer = DeclarationDetailSerializer(declaration)
-        return Response(
-            response_serializer.data,
-            status=status.HTTP_201_CREATED
-        )
+        try:
+            serializer = self.get_serializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+            
+            with transaction.atomic():
+                declaration = serializer.save()
+                print(f"[DEBUG] Declaración creada: {declaration.id} - {declaration.title}")
+            
+            # Serializar la respuesta con el serializador detallado
+            response_serializer = DeclarationDetailSerializer(declaration)
+            return Response(
+                response_serializer.data,
+                status=status.HTTP_201_CREATED
+            )
+            
+        except Exception as e:
+            print(f"[ERROR] Error en create(): {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return Response(
+                {'error': f'Error creando declaración: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def retrieve(self, request, *args, **kwargs):
+        """
+        Obtiene una declaración específica - SIMPLIFICADO.
+        """
+        print(f"[DEBUG] DeclarationViewSet.retrieve() - START")
+        try:
+            instance = self.get_object()
+            serializer = self.get_serializer(instance)
+            return Response(serializer.data)
+        except Exception as e:
+            print(f"[ERROR] Error en retrieve(): {str(e)}")
+            return Response(
+                {'error': f'Error obteniendo declaración: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
     
     def update(self, request, *args, **kwargs):
         """
-        Actualiza una declaración (solo si es editable).
+        Actualiza una declaración - SIMPLIFICADO.
         """
-        partial = kwargs.pop('partial', False)
-        instance = self.get_object()
-        
-        if not instance.is_editable:
-            return Response(
-                {'error': 'Esta declaración no se puede editar en su estado actual'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        serializer = self.get_serializer(instance, data=request.data, partial=partial)
-        serializer.is_valid(raise_exception=True)
-        self.perform_update(serializer)
-        
-        return Response(serializer.data)
-    
-    @action(detail=True, methods=['post'])
-    def update_status(self, request, pk=None):
-        """
-        Actualiza el estado de una declaración.
-        """
-        declaration = self.get_object()
-        serializer = UpdateDeclarationStatusSerializer(
-            data=request.data,
-            context={'instance': declaration}
-        )
-        serializer.is_valid(raise_exception=True)
-        
-        new_status = serializer.validated_data['status']
-        
-        with transaction.atomic():
-            if new_status == 'completed':
-                declaration.mark_as_completed()
-            elif new_status == 'paid':
-                declaration.mark_as_paid()
-            else:
-                declaration.status = new_status
-                declaration.save()
-        
-        logger.info(f"Estado de declaración {declaration.id} actualizado a: {new_status}")
-        
-        response_serializer = DeclarationDetailSerializer(declaration)
-        return Response(response_serializer.data)
-    
-    @action(detail=True, methods=['post'])
-    def process_documents(self, request, pk=None):
-        """
-        Inicia el procesamiento de documentos de una declaración.
-        """
-        declaration = self.get_object()
-        
-        if not declaration.has_documents:
-            return Response(
-                {'error': 'No hay documentos para procesar'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        if declaration.status != 'draft':
-            return Response(
-                {'error': 'Solo se pueden procesar declaraciones en estado borrador'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        # Cambiar estado a procesando
-        declaration.status = 'processing'
-        declaration.save()
-        
-        # Lanzar tarea asíncrona
-        process_declaration_documents.delay(declaration.id)
-        
-        return Response({
-            'message': 'Procesamiento iniciado',
-            'declaration_id': str(declaration.id),
-            'status': declaration.status
-        })
-    
-    @action(detail=True, methods=['get'])
-    def income_summary(self, request, pk=None):
-        """
-        Obtiene un resumen de ingresos por tipo y cédula.
-        """
-        declaration = self.get_object()
-        
-        summary = {
-            'total_records': declaration.income_records.count(),
-            'total_income': float(declaration.total_income),
-            'total_withholdings': float(declaration.total_withholdings),
-            'by_type': {},
-            'by_schedule': {}
-        }
-        
-        # Agrupar por tipo de ingreso
-        income_records = declaration.income_records.all()
-        
-        for record in income_records:
-            # Por tipo
-            income_type = record.income_type
-            if income_type not in summary['by_type']:
-                summary['by_type'][income_type] = {
-                    'count': 0,
-                    'gross_amount': 0,
-                    'withholding_amount': 0,
-                    'display_name': record.get_income_type_display()
-                }
+        print(f"[DEBUG] DeclarationViewSet.update() - START")
+        try:
+            partial = kwargs.pop('partial', False)
+            instance = self.get_object()
             
-            summary['by_type'][income_type]['count'] += 1
-            summary['by_type'][income_type]['gross_amount'] += float(record.gross_amount)
-            summary['by_type'][income_type]['withholding_amount'] += float(record.withholding_amount)
+            if not instance.is_editable:
+                return Response(
+                    {'error': 'Esta declaración no se puede editar en su estado actual'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
             
-            # Por cédula
-            if record.tax_schedule:
-                schedule = record.tax_schedule
-                if schedule not in summary['by_schedule']:
-                    summary['by_schedule'][schedule] = {
-                        'count': 0,
-                        'gross_amount': 0,
-                        'withholding_amount': 0,
-                        'display_name': record.get_tax_schedule_display()
-                    }
-                
-                summary['by_schedule'][schedule]['count'] += 1
-                summary['by_schedule'][schedule]['gross_amount'] += float(record.gross_amount)
-                summary['by_schedule'][schedule]['withholding_amount'] += float(record.withholding_amount)
-        
-        return Response(summary)
-    
-    @action(detail=True, methods=['get'])
-    def download_draft(self, request, pk=None):
-        """
-        Genera y descarga el borrador de la declaración.
-        """
-        declaration = self.get_object()
-        
-        if declaration.status not in ['completed', 'paid']:
+            serializer = self.get_serializer(instance, data=request.data, partial=partial)
+            serializer.is_valid(raise_exception=True)
+            self.perform_update(serializer)
+            
+            # Retornar con serializador detallado
+            response_serializer = DeclarationDetailSerializer(instance)
+            return Response(response_serializer.data)
+            
+        except Exception as e:
+            print(f"[ERROR] Error en update(): {str(e)}")
             return Response(
-                {'error': 'El borrador solo está disponible para declaraciones completadas'},
-                status=status.HTTP_400_BAD_REQUEST
+                {'error': f'Error actualizando declaración: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-        
-        # TODO: Implementar generación de PDF del formulario 210
-        # Por ahora, retornar los datos en formato JSON
-        
-        draft_data = {
-            'declaration_id': str(declaration.id),
-            'fiscal_year': declaration.fiscal_year,
-            'generated_at': timezone.now().isoformat(),
-            'user': {
-                'email': declaration.user.email,
-                'name': declaration.user.get_full_name()
-            },
-            'summary': {
-                'total_income': float(declaration.total_income),
-                'total_withholdings': float(declaration.total_withholdings),
-                'preliminary_tax': float(declaration.preliminary_tax) if declaration.preliminary_tax else 0,
-                'balance': float(declaration.balance) if declaration.balance else 0
-            },
-            'income_records': IncomeRecordSerializer(
-                declaration.income_records.all(),
-                many=True
-            ).data
-        }
-        
-        return Response(draft_data)
+    
+    def destroy(self, request, *args, **kwargs):
+        """
+        Elimina una declaración (soft delete) - SIMPLIFICADO.
+        """
+        print(f"[DEBUG] DeclarationViewSet.destroy() - START")
+        try:
+            instance = self.get_object()
+            
+            if not instance.is_editable:
+                return Response(
+                    {'error': 'Esta declaración no se puede eliminar en su estado actual'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            instance.soft_delete()
+            logger.info(f"Declaración {instance.id} eliminada (soft delete)")
+            
+            return Response({
+                'message': 'Declaración eliminada exitosamente',
+                'declaration_id': str(instance.id)
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            print(f"[ERROR] Error en destroy(): {str(e)}")
+            return Response(
+                {'error': f'Error eliminando declaración: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
     
     @action(detail=False, methods=['get'])
-    def current_year(self, request):
+    def stats(self, request):
         """
-        Obtiene la declaración del año actual si existe.
+        Obtiene estadísticas de declaraciones - SIMPLIFICADO.
         """
-        current_year = timezone.now().year - 1  # Generalmente se declara el año anterior
-        
+        print(f"[DEBUG] DeclarationViewSet.stats() - START")
         try:
-            declaration = Declaration.objects.get(
-                user=request.user,
-                fiscal_year=current_year
+            # SIMPLIFICADO: Estadísticas de todas las declaraciones activas
+            active_declarations = Declaration.objects.filter(is_active=True)
+            
+            # Calcular estadísticas básicas
+            stats = {
+                'total_declarations': active_declarations.count(),
+                'active_declarations': active_declarations.filter(is_active=True).count(),
+                'completed_declarations': active_declarations.filter(status='completed').count(),
+                'draft_declarations': active_declarations.filter(status='draft').count(),
+                'declarations_by_year': {},
+                'declarations_by_status': {},
+                'total_income_all': 0,
+                'total_withholdings_all': 0,
+                'last_declaration': None
+            }
+            
+            # Agrupar por año y acumular totales
+            for declaration in active_declarations:
+                year = str(declaration.fiscal_year)
+                stats['declarations_by_year'][year] = stats['declarations_by_year'].get(year, 0) + 1
+                
+                # Acumular totales
+                stats['total_income_all'] += float(declaration.total_income)
+                stats['total_withholdings_all'] += float(declaration.total_withholdings)
+            
+            # Agrupar por estado
+            status_counts = active_declarations.values('status').annotate(
+                count=models.Count('id')
             )
-            serializer = DeclarationDetailSerializer(declaration)
+            for item in status_counts:
+                stats['declarations_by_status'][item['status']] = item['count']
+            
+            # Última declaración
+            last_declaration = active_declarations.first()
+            if last_declaration:
+                stats['last_declaration'] = DeclarationSummarySerializer(last_declaration).data
+            
+            serializer = DeclarationStatsSerializer(stats)
             return Response(serializer.data)
-        except Declaration.DoesNotExist:
+            
+        except Exception as e:
+            print(f"[ERROR] Error en stats(): {str(e)}")
             return Response(
-                {'message': f'No existe declaración para el año {current_year}'},
-                status=status.HTTP_404_NOT_FOUND
+                {'error': f'Error obteniendo estadísticas: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
 
 class IncomeRecordViewSet(viewsets.ReadOnlyModelViewSet):
     """
-    ViewSet para consultar registros de ingresos.
+    ViewSet para consultar registros de ingresos - SIMPLIFICADO.
     """
     serializer_class = IncomeRecordSerializer
-    permission_classes = [AllowAny]  # TESTING: Sin permisos
+    permission_classes = [AllowAny]  # Sin permisos para desarrollo
     
     def get_queryset(self):
         """
-        Filtra los registros por declaración y usuario.
+        Filtra los registros por declaración - SIMPLIFICADO.
         """
+        print(f"[DEBUG] IncomeRecordViewSet.get_queryset()")
+        
         declaration_id = self.kwargs.get('declaration_pk')
         
         if declaration_id:
-            # En modo testing, no verificar usuario
-            from django.conf import settings
-            if getattr(settings, 'DEV_SKIP_AUTH_FOR_TESTING', False):
-                declaration = get_object_or_404(Declaration, id=declaration_id)
-            else:
-                # Verificar que la declaración pertenece al usuario
-                declaration = get_object_or_404(
-                    Declaration,
-                    id=declaration_id,
-                    user=self.request.user
-                )
+            # SIMPLIFICADO: Sin verificar usuario
+            declaration = get_object_or_404(Declaration, id=declaration_id)
             return IncomeRecord.objects.filter(declaration=declaration)
         
-        # Si no hay declaration_pk, retornar según modo
-        from django.conf import settings
-        if getattr(settings, 'DEV_SKIP_AUTH_FOR_TESTING', False):
-            return IncomeRecord.objects.all().select_related('declaration')
-        
-        # Si no hay declaration_pk, retornar todos los registros del usuario
-        return IncomeRecord.objects.filter(
-            declaration__user=self.request.user
-        ).select_related('declaration')
+        # SIMPLIFICADO: Retornar todos los registros
+        return IncomeRecord.objects.all().select_related('declaration')

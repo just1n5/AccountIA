@@ -60,7 +60,7 @@ class DocumentViewSet(viewsets.ModelViewSet):
         ).select_related('declaration').order_by('-created_at')
     
     @action(detail=False, methods=['post'])
-    def upload_direct(self, request, declaration_pk=None):
+    def initiate_upload(self, request, declaration_pk=None):
         """
         Upload directo para modo testing (sin signed URLs).
         """
@@ -124,30 +124,97 @@ class DocumentViewSet(viewsets.ModelViewSet):
                 document.upload_status = 'uploaded'
                 document.save()
                 
-                # Procesar archivo
+                # Procesar archivo REAL (no demo)
                 if document.file_type == 'exogena_report':
-                    # En testing, usar datos demo
-                    from apps.documents.parsers.excel_parser import ExogenaParser
-                    parser = ExogenaParser()
-                    demo_data = parser.parse_demo_data()
-                    
-                    document.processed_data = demo_data
-                    document.upload_status = 'processed'
-                    document.save()
-                    
-                    # Actualizar declaración con datos demo
-                    declaration.total_income = str(demo_data.get('metadata', {}).get('total_ingresos', 0))
-                    declaration.total_withholdings = str(demo_data.get('metadata', {}).get('total_retenciones', 0))
-                    declaration.save()
-                    
-                logger.info(f"Archivo procesado en modo testing: {document.id}")
-                
-                return Response({
-                    'document_id': str(document.id),
-                    'status': 'processed',
-                    'processed_data': demo_data,
-                    'message': 'Archivo procesado con datos demo'
-                }, status=status.HTTP_201_CREATED)
+                    try:
+                        # Guardar archivo temporalmente para procesamiento
+                        import tempfile
+                        with tempfile.NamedTemporaryFile(delete=False, suffix=file_ext) as temp_file:
+                            # Escribir contenido del archivo subido al archivo temporal
+                            for chunk in uploaded_file.chunks():
+                                temp_file.write(chunk)
+                            temp_file_path = temp_file.name
+                        
+                        # Procesar archivo real con parser robusto
+                        from apps.documents.parsers.excel_parser import ExogenaParser
+                        parser = ExogenaParser()
+                        
+                        print(f"[REAL PROCESSING] Procesando archivo real: {uploaded_file.name}")
+                        real_data = parser.parse_excel_file(temp_file_path)
+                        
+                        # Limpiar archivo temporal
+                        os.unlink(temp_file_path)
+                        
+                        if real_data['success']:
+                            document.processed_data = real_data
+                            document.upload_status = 'processed'
+                            document.save()
+                            
+                            # Actualizar declaración con datos REALES
+                            if 'stats' in real_data and real_data['stats']:
+                                stats = real_data['stats']
+                                declaration.total_income = str(float(stats.get('total_income', 0)))
+                                declaration.total_withholdings = str(float(stats.get('total_withholdings', 0)))
+                                declaration.save()
+                                
+                                print(f"[REAL DATA] Ingresos: {declaration.total_income}, Retenciones: {declaration.total_withholdings}")
+                            
+                            logger.info(f"Archivo REAL procesado exitosamente: {document.id}")
+                            
+                            return Response({
+                                'document_id': str(document.id),
+                                'status': 'processed',
+                                'processed_data': real_data,
+                                'message': f'Archivo real procesado: {len(real_data.get("records", []))} registros encontrados',
+                                'file_info': real_data.get('file_info', {}),
+                                'processing_type': 'REAL_DATA'
+                            }, status=status.HTTP_201_CREATED)
+                        else:
+                            # Si falla el procesamiento real, usar datos demo como fallback
+                            print(f"[FALLBACK] Procesamiento real falló, usando datos demo")
+                            print(f"[ERRORS] {real_data.get('errors', [])}")
+                            
+                            demo_data = parser.parse_demo_data()
+                            document.processed_data = demo_data
+                            document.upload_status = 'processed'
+                            document.save()
+                            
+                            # Agregar warning sobre fallback
+                            demo_data['warnings'] = demo_data.get('warnings', []) + [
+                                'Procesamiento real falló, usando datos demo como fallback',
+                                f'Errores del procesamiento real: {"; ".join(real_data.get("errors", []))[:200]}...'
+                            ]
+                            
+                            return Response({
+                                'document_id': str(document.id),
+                                'status': 'processed',
+                                'processed_data': demo_data,
+                                'message': 'Archivo procesado con datos demo (fallback por errores en procesamiento real)',
+                                'processing_type': 'DEMO_FALLBACK',
+                                'real_processing_errors': real_data.get('errors', [])
+                            }, status=status.HTTP_201_CREATED)
+                            
+                    except Exception as e:
+                        print(f"[ERROR] Error en procesamiento real: {str(e)}")
+                        logger.error(f"Error en procesamiento real: {str(e)}")
+                        
+                        # Fallback a datos demo en caso de error
+                        from apps.documents.parsers.excel_parser import ExogenaParser
+                        parser = ExogenaParser()
+                        demo_data = parser.parse_demo_data()
+                        
+                        document.processed_data = demo_data
+                        document.upload_status = 'processed'
+                        document.save()
+                        
+                        return Response({
+                            'document_id': str(document.id),
+                            'status': 'processed',
+                            'processed_data': demo_data,
+                            'message': f'Error en procesamiento real, usando datos demo: {str(e)}',
+                            'processing_type': 'DEMO_ERROR_FALLBACK',
+                            'error_details': str(e)
+                        }, status=status.HTTP_201_CREATED)
                 
             except Exception as e:
                 logger.error(f"Error al procesar archivo: {str(e)}")

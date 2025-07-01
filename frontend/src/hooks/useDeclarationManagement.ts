@@ -1,59 +1,131 @@
 // frontend/src/hooks/useDeclarationManagement.ts
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import declarationService, { Declaration } from '../services/declarationService';
+import declarationService, { 
+  Declaration, 
+  DeclarationStats, 
+  DuplicateDeclarationRequest,
+  BulkActionRequest
+} from '../services/declarationService';
 
 interface UseDeclarationManagementState {
   declarations: Declaration[];
   isLoading: boolean;
   isRefreshing: boolean;
   isCreating: boolean;
+  isDuplicating: boolean;
+  isDeleting: boolean;
+  isBulkActioning: boolean;
   error: string | null;
   stats: {
     totalDeclarations: number;
     currentYearDeclaration?: Declaration;
     lastDeclaration?: Declaration;
     hasCurrentYear: boolean;
+    // Nuevas estadísticas
+    activeDeclarations: number;
+    completedDeclarations: number;
+    draftDeclarations: number;
+    declarationsByYear: Record<string, number>;
+    declarationsByStatus: Record<string, number>;
   } | null;
+  filters: {
+    fiscalYear?: number;
+    status?: string;
+    showDeleted?: boolean;
+  };
 }
 
 interface UseDeclarationManagementActions {
   fetchDeclarations: (showRefresh?: boolean) => Promise<void>;
-  createDeclaration: (fiscalYear: number) => Promise<Declaration | null>;
+  createDeclaration: (fiscalYear: number, title?: string) => Promise<Declaration | null>;
+  duplicateDeclaration: (id: string, options?: DuplicateDeclarationRequest) => Promise<Declaration | null>;
+  deleteDeclaration: (id: string) => Promise<boolean>;
+  restoreDeclaration: (id: string) => Promise<Declaration | null>;
+  bulkAction: (request: BulkActionRequest) => Promise<boolean>;
+  updateDeclarationStatus: (id: string, status: string) => Promise<Declaration | null>;
   refreshDeclarations: () => Promise<void>;
+  setFilters: (filters: Partial<UseDeclarationManagementState['filters']>) => void;
+  clearFilters: () => void;
   clearError: () => void;
   retry: () => Promise<void>;
+  getDeclarationsByYear: (year: number) => Declaration[];
+  getDeclarationsByStatus: (status: string) => Declaration[];
 }
 
 type UseDeclarationManagementReturn = UseDeclarationManagementState & UseDeclarationManagementActions;
 
 export const useDeclarationManagement = (): UseDeclarationManagementReturn => {
-  // 🔥🔥🔥 HOOK NUEVO CARGADO - v2024.6.23.1 🔥🔥🔥
-  console.log('[HOOK] useDeclarationManagement CARGADO - v2024.6.23.1');
+  // 🔥🔥🔥 HOOK MÚLTIPLES DECLARACIONES - v2024.6.25.1 🔥🔥🔥
+  console.log('[HOOK] useDeclarationManagement MÚLTIPLES DECLARACIONES - v2024.6.25.1');
   
   const [declarations, setDeclarations] = useState<Declaration[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
+  const [isDuplicating, setIsDuplicating] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [isBulkActioning, setIsBulkActioning] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [filters, setFiltersState] = useState<UseDeclarationManagementState['filters']>({});
 
   const currentYear = new Date().getFullYear() - 1; // Generalmente se declara el año anterior
 
-  // 🎯 OPTIMIZACIÓN: Memoización de estadísticas
+  // 🎯 OPTIMIZACIÓN: Memoización de estadísticas avanzadas
   const stats = useMemo(() => {
     if (!declarations.length) return null;
     
-    const currentYearDeclaration = declarations.find(d => d.fiscal_year === currentYear);
-    const totalDeclarations = declarations.length;
-    const lastDeclaration = declarations[0]; // Asume que están ordenadas por fecha
+    const activeDeclarations = declarations.filter(d => d.is_active);
+    const currentYearDeclaration = activeDeclarations.find(d => d.fiscal_year === currentYear);
+    const lastDeclaration = activeDeclarations[0]; // Asume que están ordenadas por fecha
+    
+    // Agrupar por año
+    const declarationsByYear: Record<string, number> = {};
+    activeDeclarations.forEach(d => {
+      const year = d.fiscal_year.toString();
+      declarationsByYear[year] = (declarationsByYear[year] || 0) + 1;
+    });
+    
+    // Agrupar por estado
+    const declarationsByStatus: Record<string, number> = {};
+    activeDeclarations.forEach(d => {
+      declarationsByStatus[d.status] = (declarationsByStatus[d.status] || 0) + 1;
+    });
     
     return {
-      totalDeclarations,
+      totalDeclarations: declarations.length,
+      activeDeclarations: activeDeclarations.length,
+      completedDeclarations: activeDeclarations.filter(d => declarationService.isCompleted(d)).length,
+      draftDeclarations: activeDeclarations.filter(d => d.status === 'draft').length,
       lastDeclaration,
       currentYearDeclaration,
-      hasCurrentYear: !!currentYearDeclaration
+      hasCurrentYear: !!currentYearDeclaration,
+      declarationsByYear,
+      declarationsByStatus
     };
   }, [declarations, currentYear]);
+  
+  // 🎯 OPTIMIZACIÓN: Memoización de declaraciones filtradas
+  const filteredDeclarations = useMemo(() => {
+    let filtered = declarations;
+    
+    // Filtro por estado activo/inactivo
+    if (!filters.showDeleted) {
+      filtered = filtered.filter(d => d.is_active);
+    }
+    
+    // Filtro por año fiscal
+    if (filters.fiscalYear) {
+      filtered = filtered.filter(d => d.fiscal_year === filters.fiscalYear);
+    }
+    
+    // Filtro por estado
+    if (filters.status) {
+      filtered = filtered.filter(d => d.status === filters.status);
+    }
+    
+    return filtered;
+  }, [declarations, filters]);
 
   // 🎯 OPTIMIZACIÓN: Función de fetch con mejor manejo de errores
   const fetchDeclarations = useCallback(async (showRefresh = false) => {
@@ -86,23 +158,22 @@ export const useDeclarationManagement = (): UseDeclarationManagementReturn => {
     }
   }, []);
 
-  // 🎯 OPTIMIZACIÓN: Función de creación con mejor feedback
-  const createDeclaration = useCallback(async (fiscalYear: number): Promise<Declaration | null> => {
+  // 🎯 OPTIMIZACIÓN: Función de creación con título personalizado
+  const createDeclaration = useCallback(async (fiscalYear: number, title?: string): Promise<Declaration | null> => {
     try {
       setIsCreating(true);
       setError(null);
       
-      // Verificar si ya existe
-      const existingDeclaration = declarations.find(d => d.fiscal_year === fiscalYear);
-      if (existingDeclaration) {
-        setError(`Ya existe una declaración para el año ${fiscalYear}`);
-        return null;
-      }
+      // Generar título automático si no se proporciona
+      const finalTitle = title || declarationService.generateTitle(fiscalYear, declarations.filter(d => d.is_active));
       
       console.log('[CREATE] Creando declaracion para el año:', fiscalYear);
       console.log('[STATE] Estado actual de declaraciones:', declarations.length);
       
-      const requestData = { fiscal_year: fiscalYear };
+      const requestData = { 
+        fiscal_year: fiscalYear,
+        title: finalTitle
+      };
       console.log('[REQUEST] Request data:', requestData);
       
       const response = await declarationService.create(requestData);
@@ -174,6 +245,148 @@ export const useDeclarationManagement = (): UseDeclarationManagementReturn => {
       setIsCreating(false);
     }
   }, [declarations]);
+  
+  // 🆕 NUEVA FUNCIONALIDAD: Duplicar declaración
+  const duplicateDeclaration = useCallback(async (id: string, options: DuplicateDeclarationRequest = {}): Promise<Declaration | null> => {
+    try {
+      setIsDuplicating(true);
+      setError(null);
+      
+      console.log('[DUPLICATE] Duplicando declaración:', id, options);
+      
+      const response = await declarationService.duplicate(id, options);
+      
+      console.log('[DUPLICATE] Declaración duplicada exitosamente:', response.id);
+      
+      // Actualizar estado local
+      setDeclarations(prev => [response, ...prev]);
+      
+      return response;
+      
+    } catch (err: any) {
+      console.error('[ERROR] Error duplicating declaration:', err);
+      setError(err.message || 'Error al duplicar la declaración');
+      return null;
+    } finally {
+      setIsDuplicating(false);
+    }
+  }, []);
+  
+  // 🆕 NUEVA FUNCIONALIDAD: Eliminar declaración
+  const deleteDeclaration = useCallback(async (id: string): Promise<boolean> => {
+    try {
+      setIsDeleting(true);
+      setError(null);
+      
+      console.log('[DELETE] Eliminando declaración:', id);
+      
+      await declarationService.delete(id);
+      
+      console.log('[DELETE] Declaración eliminada exitosamente');
+      
+      // Marcar como inactiva en el estado local
+      setDeclarations(prev => 
+        prev.map(d => 
+          d.id === id 
+            ? { ...d, is_active: false, deleted_at: new Date().toISOString() }
+            : d
+        )
+      );
+      
+      return true;
+      
+    } catch (err: any) {
+      console.error('[ERROR] Error deleting declaration:', err);
+      setError(err.message || 'Error al eliminar la declaración');
+      return false;
+    } finally {
+      setIsDeleting(false);
+    }
+  }, []);
+  
+  // 🆕 NUEVA FUNCIONALIDAD: Restaurar declaración
+  const restoreDeclaration = useCallback(async (id: string): Promise<Declaration | null> => {
+    try {
+      setError(null);
+      
+      console.log('[RESTORE] Restaurando declaración:', id);
+      
+      const response = await declarationService.restore(id);
+      
+      console.log('[RESTORE] Declaración restaurada exitosamente:', response.id);
+      
+      // Actualizar estado local
+      setDeclarations(prev => 
+        prev.map(d => 
+          d.id === id 
+            ? { ...response, is_active: true, deleted_at: null }
+            : d
+        )
+      );
+      
+      return response;
+      
+    } catch (err: any) {
+      console.error('[ERROR] Error restoring declaration:', err);
+      setError(err.message || 'Error al restaurar la declaración');
+      return null;
+    }
+  }, []);
+  
+  // 🆕 NUEVA FUNCIONALIDAD: Acciones en lote
+  const bulkAction = useCallback(async (request: BulkActionRequest): Promise<boolean> => {
+    try {
+      setIsBulkActioning(true);
+      setError(null);
+      
+      console.log('[BULK] Ejecutando acción en lote:', request);
+      
+      const response = await declarationService.bulkAction(request);
+      
+      console.log('[BULK] Acción completada:', response);
+      
+      // Refrescar declaraciones para obtener el estado actualizado
+      await fetchDeclarations(true);
+      
+      return response.results.every(r => r.success);
+      
+    } catch (err: any) {
+      console.error('[ERROR] Error in bulk action:', err);
+      setError(err.message || 'Error en acción en lote');
+      return false;
+    } finally {
+      setIsBulkActioning(false);
+    }
+  }, []);
+  
+  // 🆕 NUEVA FUNCIONALIDAD: Actualizar estado de declaración
+  const updateDeclarationStatus = useCallback(async (id: string, status: string): Promise<Declaration | null> => {
+    try {
+      setError(null);
+      
+      console.log('[UPDATE_STATUS] Actualizando estado:', id, status);
+      
+      const response = await declarationService.updateStatus(id, status);
+      
+      console.log('[UPDATE_STATUS] Estado actualizado exitosamente');
+      
+      // Actualizar estado local
+      setDeclarations(prev => 
+        prev.map(d => 
+          d.id === id 
+            ? { ...d, ...response }
+            : d
+        )
+      );
+      
+      return response;
+      
+    } catch (err: any) {
+      console.error('[ERROR] Error updating status:', err);
+      setError(err.message || 'Error al actualizar estado');
+      return null;
+    }
+  }, []);
 
   // 🎯 NUEVA FUNCIONALIDAD: Refresh específico
   const refreshDeclarations = useCallback(() => {
@@ -189,6 +402,24 @@ export const useDeclarationManagement = (): UseDeclarationManagementReturn => {
   const retry = useCallback(() => {
     return fetchDeclarations();
   }, [fetchDeclarations]);
+  
+  // 🆕 FUNCIONALIDADES DE FILTRADO
+  const setFilters = useCallback((newFilters: Partial<UseDeclarationManagementState['filters']>) => {
+    setFiltersState(prev => ({ ...prev, ...newFilters }));
+  }, []);
+  
+  const clearFilters = useCallback(() => {
+    setFiltersState({});
+  }, []);
+  
+  // 🆕 FUNCIONALIDADES DE CONSULTA
+  const getDeclarationsByYear = useCallback((year: number): Declaration[] => {
+    return declarations.filter(d => d.fiscal_year === year && d.is_active);
+  }, [declarations]);
+  
+  const getDeclarationsByStatus = useCallback((status: string): Declaration[] => {
+    return declarations.filter(d => d.status === status && d.is_active);
+  }, [declarations]);
 
   // 🎯 OPTIMIZACIÓN: Fetch inicial automático
   useEffect(() => {
@@ -199,29 +430,42 @@ export const useDeclarationManagement = (): UseDeclarationManagementReturn => {
   useEffect(() => {
     const interval = setInterval(() => {
       // Solo refrescar si no hay operaciones en curso y no hay errores
-      if (!isLoading && !isRefreshing && !isCreating && !error) {
+      if (!isLoading && !isRefreshing && !isCreating && !isDuplicating && !isDeleting && !isBulkActioning && !error) {
         fetchDeclarations(true);
       }
     }, 5 * 60 * 1000); // 5 minutos
 
     return () => clearInterval(interval);
-  }, [isLoading, isRefreshing, isCreating, error, fetchDeclarations]);
+  }, [isLoading, isRefreshing, isCreating, isDuplicating, isDeleting, isBulkActioning, error, fetchDeclarations]);
 
   return {
     // Estado
-    declarations,
+    declarations: filteredDeclarations,
     isLoading,
     isRefreshing,
     isCreating,
+    isDuplicating,
+    isDeleting,
+    isBulkActioning,
     error,
     stats,
+    filters,
     
     // Acciones
     fetchDeclarations,
     createDeclaration,
+    duplicateDeclaration,
+    deleteDeclaration,
+    restoreDeclaration,
+    bulkAction,
+    updateDeclarationStatus,
     refreshDeclarations,
+    setFilters,
+    clearFilters,
     clearError,
-    retry
+    retry,
+    getDeclarationsByYear,
+    getDeclarationsByStatus
   };
 };
 
@@ -277,7 +521,42 @@ export const useDeclaration = (id: string) => {
 };
 
 // 🎯 TIPOS DE UTILIDAD
+// 🆕 HOOK PARA ESTADÍSTICAS AVANZADAS
+export const useDeclarationStats = () => {
+  const [stats, setStats] = useState<DeclarationStats | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const fetchStats = useCallback(async () => {
+    try {
+      setIsLoading(true);
+      setError(null);
+      
+      const response = await declarationService.getStats();
+      setStats(response);
+    } catch (err: any) {
+      console.error('Error fetching stats:', err);
+      setError(err.message || 'Error obteniendo estadísticas');
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchStats();
+  }, [fetchStats]);
+
+  return {
+    stats,
+    isLoading,
+    error,
+    fetchStats,
+    clearError: () => setError(null)
+  };
+};
+
 export type DeclarationManagement = UseDeclarationManagementReturn;
 export type DeclarationHook = ReturnType<typeof useDeclaration>;
+export type DeclarationStatsHook = ReturnType<typeof useDeclarationStats>;
 
 export default useDeclarationManagement;

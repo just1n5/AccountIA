@@ -58,7 +58,61 @@ export interface DocumentSummaryResponse {
  * Servicio para gestión de documentos
  */
 class DocumentService {
-  private readonly baseUrl = '/api/v1';
+  private readonly baseUrl = ''; // Las URLs base ya están manejadas por api.ts
+
+  /**
+   * Obtiene el resumen detallado de un documento procesado
+   */
+  async getDetailedSummary(documentId: string): Promise<any> {
+    try {
+      const response = await api.get(
+        `${this.baseUrl}/documents/${documentId}/detailed_summary/`
+      );
+      return response;
+    } catch (error: any) {
+      console.error('Error getting detailed summary:', error);
+      throw new Error(
+        error.response?.data?.error || 
+        'Error obteniendo resumen detallado'
+      );
+    }
+  }
+
+  /**
+   * Obtiene un documento específico por ID
+   */
+  async getById(documentId: string): Promise<Document> {
+    try {
+      const response = await api.get<Document>(
+        `${this.baseUrl}/documents/${documentId}/`
+      );
+      return response;
+    } catch (error: any) {
+      console.error('Error getting document by ID:', error);
+      throw new Error(
+        error.response?.data?.error || 
+        'Error obteniendo documento'
+      );
+    }
+  }
+
+  /**
+   * Descarga un documento
+   */
+  async downloadDocument(documentId: string): Promise<void> {
+    try {
+      const { download_url } = await this.getDownloadUrl(documentId);
+      
+      // Abrir en nueva ventana para descargar
+      window.open(download_url, '_blank');
+    } catch (error: any) {
+      console.error('Error downloading document:', error);
+      throw new Error(
+        error.response?.data?.error || 
+        'Error descargando documento'
+      );
+    }
+  }
 
   /**
    * Solicita una URL firmada para subir un archivo
@@ -398,23 +452,12 @@ class DocumentService {
       onProgress?.(30);
 
       // Upload directo usando fetch para mostrar progreso
-      const response = await fetch(
-        `${this.baseUrl}/declarations/${declarationId}/documents/upload_direct/`,
-        {
-          method: 'POST',
-          body: formData,
-          // No establecer Content-Type, let browser handle it for FormData
-        }
+      // Usar api.post para mantener consistencia con headers y baseURL
+      const result = await api.post(
+        `/declarations/${declarationId}/documents/upload_direct/`,
+        formData
       );
 
-      onProgress?.(90);
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || `HTTP ${response.status}`);
-      }
-
-      const result = await response.json();
       onProgress?.(100);
 
       return result;

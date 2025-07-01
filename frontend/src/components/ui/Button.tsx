@@ -48,3 +48,6 @@ export const Button: React.FC<ButtonProps> = ({
     </button>
   );
 };
+
+// Default export for import Button from './Button'
+export default Button;

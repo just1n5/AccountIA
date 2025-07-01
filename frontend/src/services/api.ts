@@ -1,4 +1,4 @@
-// API client configuration
+// API client configuration - FIXED VERSION v2
 interface ApiResponse<T = any> {
   data: T;
   status: number;
@@ -22,10 +22,20 @@ class ApiClient {
   private defaultHeaders: Record<string, string>;
 
   constructor() {
-    this.baseURL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+    // NUEVA ESTRATEGIA: baseURL siempre incluye /api/v1
+    const envUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+    
+    // Limpiar cualquier /api/v1 existente y agregar uno limpio
+    const cleanBaseUrl = envUrl.replace(/\/api\/v1\/?$/, '');
+    this.baseURL = `${cleanBaseUrl}/api/v1`;
+    
     this.defaultHeaders = {
       'Content-Type': 'application/json',
     };
+    
+    console.log('🚀 API Client initialized with baseURL:', this.baseURL);
+    console.log('🔧 Environment URL:', envUrl);
+    console.log('🧹 Clean base URL:', cleanBaseUrl);
     
     // Recuperar token del localStorage al inicializar
     const token = localStorage.getItem('auth_token');
@@ -40,16 +50,38 @@ class ApiClient {
     data?: any,
     headers?: Record<string, string>
   ): Promise<T> {
-    const fullURL = url.startsWith('http') ? url : `${this.baseURL}${url}`;
+    // NUEVA LÓGICA: Construir URLs inteligentemente
+    let fullURL: string;
     
-    // Para desarrollo: si no hay token y no es un endpoint de auth, usar modo demo
-    if (!this.defaultHeaders['Authorization'] && !url.includes('/auth/')) {
-      console.log('🔄 Using demo mode for API calls');
-      // En desarrollo, permitir algunas llamadas sin autenticación
-      if (url.includes('/declarations/')) {
-        return this.mockApiResponse(url, method) as T;
+    if (url.startsWith('http')) {
+      // URL absoluta - usar tal como está
+      fullURL = url;
+    } else {
+      // URL relativa - limpiar duplicaciones y construir correctamente
+      let cleanUrl = url;
+      
+      // Remover /api/v1 del inicio si existe (evitar duplicación)
+      if (cleanUrl.startsWith('/api/v1')) {
+        cleanUrl = cleanUrl.substring(7); // Remover "/api/v1"
       }
+      
+      // Asegurar que empiece con /
+      if (!cleanUrl.startsWith('/')) {
+        cleanUrl = `/${cleanUrl}`;
+      }
+      
+      // Construir URL final
+      fullURL = `${this.baseURL}${cleanUrl}`;
     }
+    
+    // Log detallado para debugging
+    console.log('🚀 Direct API call to backend:', method, fullURL);
+    console.log('📝 URL construction:', {
+      method,
+      originalUrl: url,
+      baseURL: this.baseURL,
+      finalURL: fullURL
+    });
     
     const config: RequestInit = {
       method,
@@ -78,9 +110,14 @@ class ApiClient {
           const errorData = await response.json();
           errorMessage = errorData.error || errorData.message || errorData.detail || errorMessage;
         } catch {
-          // If we can't parse the error response, use the status text
           errorMessage = response.statusText || errorMessage;
         }
+        
+        console.error('❌ API Error:', {
+          url: fullURL,
+          status: response.status,
+          message: errorMessage
+        });
         
         const error: ApiError = {
           response: {
@@ -94,13 +131,16 @@ class ApiClient {
 
       const contentType = response.headers.get('content-type');
       if (contentType && contentType.includes('application/json')) {
-        return await response.json();
+        const responseData = await response.json();
+        console.log('✅ API Success:', method, fullURL);
+        return responseData;
       } else {
+        console.log('✅ API Success (non-JSON):', method, fullURL);
         return response as any;
       }
     } catch (error) {
       if (error instanceof TypeError) {
-        // Network error
+        console.error('💥 Network Error:', fullURL);
         const networkError: ApiError = {
           message: 'Error de red. Verifica tu conexión a internet.',
         };
@@ -130,87 +170,24 @@ class ApiClient {
     return this.request<T>('DELETE', url, undefined, headers);
   }
 
-  // Set authorization token
   setAuthToken(token: string) {
     this.defaultHeaders['Authorization'] = `Bearer ${token}`;
+    console.log('🔐 Auth token set');
   }
 
-  // Remove authorization token
   removeAuthToken() {
     delete this.defaultHeaders['Authorization'];
+    console.log('🚪 Auth token removed');
   }
 
-  // Get current base URL
   getBaseURL(): string {
     return this.baseURL;
   }
 
-  // Update base URL
   setBaseURL(url: string) {
-    this.baseURL = url;
-  }
-
-  // Mock API responses for development
-  private mockApiResponse(url: string, method: string): any {
-    console.log(`🎭 Mock response for ${method} ${url}`);
-    
-    if (url.includes('/declarations/') && method === 'GET') {
-      return {
-        results: [
-          {
-            id: 'demo-declaration-1',
-            user_id: 'demo-user-1',
-            fiscal_year: 2024,
-            status: 'draft',
-            status_display: 'Borrador',
-            total_income: '50000000',
-            total_withholdings: '5000000',
-            preliminary_tax: null,
-            balance: null,
-            document_count: 0,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString()
-          },
-          {
-            id: 'demo-declaration-2',
-            user_id: 'demo-user-1',
-            fiscal_year: 2023,
-            status: 'completed',
-            status_display: 'Completada',
-            total_income: '45000000',
-            total_withholdings: '4500000',
-            preliminary_tax: '2500000',
-            balance: '-2000000',
-            document_count: 3,
-            created_at: new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString(),
-            updated_at: new Date(Date.now() - 300 * 24 * 60 * 60 * 1000).toISOString()
-          }
-        ],
-        count: 2
-      };
-    }
-    
-    if (url.includes('/declarations/') && method === 'POST') {
-      // Extraer fiscal_year del request data si está disponible
-      const currentYear = new Date().getFullYear() - 1;
-      
-      return {
-        id: 'demo-declaration-' + Date.now(),
-        user_id: 'demo-user-1',
-        fiscal_year: currentYear,
-        status: 'draft',
-        status_display: 'Borrador',
-        total_income: '0',
-        total_withholdings: '0',
-        preliminary_tax: null,
-        balance: null,
-        document_count: 0,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
-      };
-    }
-    
-    return { message: 'Demo response', data: [] };
+    const cleanBaseUrl = url.replace(/\/api\/v1\/?$/, '');
+    this.baseURL = `${cleanBaseUrl}/api/v1`;
+    console.log('🔄 Base URL updated:', this.baseURL);
   }
 }
 

@@ -39,6 +39,7 @@ LOCAL_APPS = [
     'apps.documents',
     'apps.ai_core',
     'apps.payments',
+    'apps.fiscal',  # Nueva app de análisis fiscal inteligente
     'apps.common',
 ]
 

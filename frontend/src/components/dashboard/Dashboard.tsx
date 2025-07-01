@@ -306,17 +306,39 @@ const Dashboard: React.FC = () => {
         <div>
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-xl font-semibold">Historial de Declaraciones</h2>
-            {!isLoading && declarations.length > 0 && (
+            <div className="flex items-center space-x-2">
+              {/* NUEVO: Botón para crear múltiples declaraciones del mismo año */}
               <Button
-                variant="secondary"
+                variant="primary"
                 size="sm"
-                onClick={refreshDeclarations}
-                disabled={isRefreshing}
+                onClick={() => handleCreateDeclaration(currentYear)}
+                disabled={isCreating}
+                className="bg-blue-600 hover:bg-blue-700 transition-all"
               >
-                <RefreshCw className={`w-4 h-4 mr-2 ${isRefreshing ? 'animate-spin' : ''}`} />
-                Actualizar
+                {isCreating ? (
+                  <>
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                    Creando...
+                  </>
+                ) : (
+                  <>
+                    <Plus className="w-4 h-4 mr-2" />
+                    Nueva Declaración
+                  </>
+                )}
               </Button>
-            )}
+              {!isLoading && declarations.length > 0 && (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={refreshDeclarations}
+                  disabled={isRefreshing}
+                >
+                  <RefreshCw className={`w-4 h-4 mr-2 ${isRefreshing ? 'animate-spin' : ''}`} />
+                  Actualizar
+                </Button>
+              )}
+            </div>
           </div>
           
           {isLoading ? (

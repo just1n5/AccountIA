@@ -99,9 +99,9 @@ const FileUpload: React.FC<FileUploadProps> = ({
       setUploadProgress(50);
       onUploadProgress?.(50);
 
-      // Upload directo al endpoint de testing
+      // Upload al endpoint de debug para diagnosticar
       const response = await fetch(
-        `http://localhost:8000/api/v1/declarations/${declarationId}/upload-testing/`,
+        `http://localhost:8000/api/v1/declarations/${declarationId}/debug-upload/`,
         {
           method: 'POST',
           body: formData,
@@ -117,6 +117,12 @@ const FileUpload: React.FC<FileUploadProps> = ({
       }
 
       const result = await response.json();
+      
+      console.log('🔍 DEBUGGING - Respuesta completa del backend:', result);
+      console.log('🔍 DEBUGGING - result.success:', result.success);
+      console.log('🔍 DEBUGGING - result.document_id:', result.document_id);
+      console.log('🔍 DEBUGGING - result.processed_data:', result.processed_data);
+      console.log('🔍 DEBUGGING - result.status:', result.status);
       
       setUploadProgress(100);
       onUploadProgress?.(100);

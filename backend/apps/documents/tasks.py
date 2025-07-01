@@ -9,6 +9,7 @@ import tempfile
 import os
 
 from .models import Document
+# TEMPORALMENTE COMENTADO - Requiere pandas
 from .parsers.excel_parser import ExogenaParser
 from .services.storage_service import get_storage_service
 from apps.declarations.models import Declaration, IncomeRecord
@@ -95,8 +96,14 @@ def process_exogena_document(document: Document) -> dict:
             
             # Parsear el archivo
             logger.info(f"Parseando archivo Excel: {tmp_path}")
-            parser = ExogenaParser()
-            parse_result = parser.parse_excel_file(tmp_path)
+            # TEMPORALMENTE DESHABILITADO - Requiere pandas
+            logger.warning("Excel parser temporalmente deshabilitado - pandas no instalado")
+            return {
+                'success': False,
+                'errors': ['Parser de Excel temporalmente deshabilitado. Instalar pandas para habilitar.']
+            }
+            # parser = ExogenaParser()
+            # parse_result = parser.parse_excel_file(tmp_path)
             
             # Eliminar archivo temporal
             os.unlink(tmp_path)

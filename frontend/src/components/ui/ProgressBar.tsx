@@ -136,3 +136,6 @@ export const CircularProgress: React.FC<CircularProgressProps> = ({
 
 // Export both components
 export { CircularProgress as CircularProgressBar };
+
+// Default export for import ProgressBar from './ProgressBar'
+export default ProgressBar;

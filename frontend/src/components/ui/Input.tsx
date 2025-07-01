@@ -33,3 +33,6 @@ export const Input: React.FC<InputProps> = ({
     </div>
   );
 };
+
+// Default export for import Input from './Input'
+export default Input;

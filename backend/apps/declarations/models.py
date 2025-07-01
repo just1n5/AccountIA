@@ -27,6 +27,11 @@ class Declaration(models.Model):
         related_name='declarations',
         verbose_name='Usuario'
     )
+    title = models.CharField(
+        max_length=255,
+        verbose_name='Título de la declaración',
+        help_text='Nombre descriptivo para identificar esta declaración'
+    )
     fiscal_year = models.IntegerField(
         verbose_name='Año fiscal',
         help_text='Año gravable de la declaración'
@@ -36,6 +41,11 @@ class Declaration(models.Model):
         choices=STATUS_CHOICES,
         default='draft',
         verbose_name='Estado'
+    )
+    is_active = models.BooleanField(
+        default=True,
+        verbose_name='Activa',
+        help_text='Indica si esta declaración está activa (soft delete)'
     )
     
     # Datos del resumen
@@ -76,6 +86,11 @@ class Declaration(models.Model):
         auto_now=True,
         verbose_name='Última actualización'
     )
+    deleted_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        verbose_name='Fecha de eliminación'
+    )
     completed_at = models.DateTimeField(
         null=True,
         blank=True,
@@ -103,15 +118,37 @@ class Declaration(models.Model):
         verbose_name = 'Declaración'
         verbose_name_plural = 'Declaraciones'
         ordering = ['-fiscal_year', '-created_at']
-        unique_together = [['user', 'fiscal_year']]
+        # Eliminada restricción unique_together para permitir múltiples declaraciones por año
+        # unique_together = [['user', 'fiscal_year']]  # REMOVIDO
         indexes = [
             models.Index(fields=['user', '-fiscal_year']),
             models.Index(fields=['status']),
             models.Index(fields=['created_at']),
+            # Nuevo índice para búsquedas por usuario y estado
+            models.Index(fields=['user', 'status']),
+            # Índice para declaraciones activas
+            models.Index(fields=['user', 'is_active', '-created_at']),
         ]
     
     def __str__(self):
-        return f"Declaración {self.fiscal_year} - {self.user.email}"
+        return f"{self.title} ({self.fiscal_year}) - {self.user.email}"
+    
+    def save(self, *args, **kwargs):
+        """Override save para generar título automático si no se proporciona."""
+        if not self.title:
+            # Generar título automático basado en el año fiscal
+            existing_count = Declaration.objects.filter(
+                user=self.user,
+                fiscal_year=self.fiscal_year,
+                is_active=True
+            ).count()
+            
+            if existing_count == 0:
+                self.title = f"Declaración Renta {self.fiscal_year}"
+            else:
+                self.title = f"Declaración Renta {self.fiscal_year} #{existing_count + 1}"
+        
+        super().save(*args, **kwargs)
     
     def mark_as_completed(self):
         """Marca la declaración como completada."""
@@ -124,6 +161,39 @@ class Declaration(models.Model):
         self.status = 'paid'
         self.paid_at = timezone.now()
         self.save(update_fields=['status', 'paid_at', 'updated_at'])
+    
+    def soft_delete(self):
+        """Marca la declaración como eliminada (soft delete)."""
+        self.is_active = False
+        self.deleted_at = timezone.now()
+        self.save(update_fields=['is_active', 'deleted_at', 'updated_at'])
+    
+    def restore(self):
+        """Restaura una declaración eliminada."""
+        self.is_active = True
+        self.deleted_at = None
+        self.save(update_fields=['is_active', 'deleted_at', 'updated_at'])
+    
+    def duplicate(self, new_title=None):
+        """Crea una copia de esta declaración."""
+        duplicate_title = new_title or f"{self.title} (Copia)"
+        
+        # Crear nueva declaración
+        new_declaration = Declaration.objects.create(
+            user=self.user,
+            title=duplicate_title,
+            fiscal_year=self.fiscal_year,
+            status='draft',
+            declaration_data=self.declaration_data.copy() if self.declaration_data else {}
+        )
+        
+        # Copiar registros de ingresos si existen
+        for income_record in self.income_records.all():
+            income_record.pk = None
+            income_record.declaration = new_declaration
+            income_record.save()
+        
+        return new_declaration
     
     @property
     def is_editable(self):
@@ -141,6 +211,45 @@ class Declaration(models.Model):
         if self.preliminary_tax is not None:
             return self.preliminary_tax - self.total_withholdings
         return None
+    
+    @property
+    def documents_count(self):
+        """Cuenta los documentos activos asociados."""
+        return self.documents.filter(is_active=True).count()
+    
+    @property
+    def progress_percentage(self):
+        """Calcula el porcentaje de progreso de la declaración."""
+        if self.status == 'draft':
+            # Calcular basado en documentos y datos disponibles
+            progress = 0
+            if self.has_documents:
+                progress += 40
+            if self.total_income > 0:
+                progress += 30
+            if self.declaration_data:
+                progress += 30
+            return min(progress, 90)  # Máximo 90% en draft
+        elif self.status == 'processing':
+            return 95
+        elif self.status in ['completed', 'paid']:
+            return 100
+        else:
+            return 0
+    
+    @classmethod
+    def get_active_for_user(cls, user):
+        """Obtiene todas las declaraciones activas de un usuario."""
+        return cls.objects.filter(user=user, is_active=True)
+    
+    @classmethod
+    def get_by_year_for_user(cls, user, fiscal_year):
+        """Obtiene declaraciones de un año específico para un usuario."""
+        return cls.objects.filter(
+            user=user, 
+            fiscal_year=fiscal_year, 
+            is_active=True
+        )
 
 
 class IncomeRecord(models.Model):

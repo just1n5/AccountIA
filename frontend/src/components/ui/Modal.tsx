@@ -139,3 +139,6 @@ export const ModalFooter: React.FC<ModalFooterProps> = ({ children, className = 
 Modal.Header = ModalHeader;
 Modal.Body = ModalBody;
 Modal.Footer = ModalFooter;
+
+// Default export for import Modal from './Modal'
+export default Modal;

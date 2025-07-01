@@ -68,3 +68,6 @@ export const CardContent: React.FC<CardContentProps> = ({ children, className = 
 Card.Header = CardHeader;
 Card.Title = CardTitle;
 Card.Content = CardContent;
+
+// Default export for import Card from './Card'
+export default Card;

@@ -28,7 +28,7 @@ export interface SessionResponse {
 }
 
 class AuthService {
-  private readonly baseUrl = '/api/v1/auth';
+  private readonly baseUrl = '/auth'; // Las URLs base ya están manejadas por api.ts
   private token: string | null = null;
 
   constructor() {

@@ -36,3 +36,6 @@ export const Badge: React.FC<BadgeProps> = ({
     </span>
   );
 };
+
+// Default export for import Badge from './Badge'
+export default Badge;
